@@ -36,6 +36,8 @@ const MAX_ROWS = 5000;
 const MAX_BODY = 900_000;
 const AGENT = /^[a-z0-9][a-z0-9._-]{0,31}\/[a-z0-9][a-z0-9._-]{0,31}$/;
 const LINE = /^[0-9a-f]{32}$/;
+const CHANNEL = /^#[a-z0-9][a-z0-9_-]{0,39}$/;
+const OWNER = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 const BLOB = /^[0-9a-f]{32}$/;
 const MAX_BLOB = 25 * 1024 * 1024;
 const IDLE_WIPE_MS = 10 * 60 * 1000;
@@ -108,7 +110,47 @@ export class Line {
     const columns = this.sql.exec("PRAGMA table_info(messages)").toArray().map((c) => c.name);
     if (!columns.includes("delivered")) this.sql.exec("ALTER TABLE messages ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0");
     if (!columns.includes("blobs")) this.sql.exec("ALTER TABLE messages ADD COLUMN blobs TEXT NOT NULL DEFAULT ''");
+    if (!columns.includes("mentions")) this.sql.exec("ALTER TABLE messages ADD COLUMN mentions TEXT NOT NULL DEFAULT ''");
     this.sql.exec("CREATE INDEX IF NOT EXISTS messages_to ON messages (to_agent, seq)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS channels (name TEXT NOT NULL, owner TEXT NOT NULL, PRIMARY KEY (name, owner))");
+  }
+
+  // ----- channels ---------------------------------------------------------------
+
+  channels() {
+    const byName = new Map();
+    for (const row of this.sql.exec("SELECT name, owner FROM channels ORDER BY name, owner").toArray()) {
+      if (!byName.has(row.name)) byName.set(row.name, []);
+      byName.get(row.name).push(row.owner);
+    }
+    return [...byName].map(([name, members]) => ({ name, members }));
+  }
+
+  isMember(channel, owner) {
+    return this.sql.exec("SELECT 1 FROM channels WHERE name = ? AND owner = ?", channel, owner).toArray().length > 0;
+  }
+
+  broadcastChannels() {
+    const frame = JSON.stringify({ t: "channels", channels: this.channels() });
+    for (const { ws } of this.members()) this.send(ws, frame);
+  }
+
+  /** join | leave | add (someone else): any member manages channels, like Slack. */
+  channel(ws, who, frame) {
+    const name = String(frame.name || "").toLowerCase();
+    const owner = String(frame.owner || who.owner).toLowerCase();
+    if (!CHANNEL.test(name) || !OWNER.test(owner)) return this.send(ws, JSON.stringify({ t: "error", error: "a channel is #name (letters, digits, - or _)" }));
+    if (frame.op === "join" || frame.op === "add") this.sql.exec("INSERT OR IGNORE INTO channels (name, owner) VALUES (?, ?)", name, owner);
+    else if (frame.op === "leave") this.sql.exec("DELETE FROM channels WHERE name = ? AND owner = ?", name, owner);
+    else return this.send(ws, JSON.stringify({ t: "error", error: "channel op is join, add or leave" }));
+    this.broadcastChannels();
+  }
+
+  /** Should this connected agent get this channel message? */
+  hears(who, row) {
+    if (!this.isMember(row.to_agent, who.owner)) return false;
+    if (who.listens) return true;
+    return String(row.mentions || "").includes(`,${who.owner},`) && this.choose(who.owner) === who.agent;
   }
 
   async fetch(request) {
@@ -172,6 +214,7 @@ export class Line {
     if (frame.t === "hello") return this.hello(ws, frame);
     if (!who || !who.agent) return this.send(ws, JSON.stringify({ t: "error", error: "say hello first" }));
     if (frame.t === "send") return this.deliver(ws, who, frame);
+    if (frame.t === "channel") return this.channel(ws, who, frame);
     if (frame.t === "ping") return this.send(ws, JSON.stringify({ t: "pong" }));
     this.send(ws, JSON.stringify({ t: "error", error: `unknown frame ${frame.t}` }));
   }
@@ -194,16 +237,25 @@ export class Line {
       label: String(frame.label || "").slice(0, 120),
       priority: Number.isFinite(frame.priority) ? frame.priority : 0,
       answers: Boolean(frame.answers),
+      listens: Boolean(frame.listens), // gets all of its channels' traffic (a board, root), not only @mentions
       since: Date.now(),
     };
     ws.serializeAttachment(who);
-    this.send(ws, JSON.stringify({ t: "welcome", agent, agents: this.roster() }));
+    this.sql.exec("INSERT OR IGNORE INTO channels (name, owner) VALUES ('#general', ?)", who.owner);
+    this.send(ws, JSON.stringify({ t: "welcome", agent, agents: this.roster(), channels: this.channels() }));
 
     // What it missed: messages to it (or to everyone) after its cursor…
     const since = Number.isFinite(frame.since) ? frame.since : 0;
     const missed = this.sql
       .exec("SELECT * FROM messages WHERE seq > ? AND from_agent != ? AND (to_agent = ? OR to_agent = '*') ORDER BY seq", since, agent, agent)
       .toArray();
+    // …and its channels' messages (all of them if it listens, else the ones @mentioning its owner).
+    const heard = this.sql
+      .exec("SELECT * FROM messages WHERE seq > ? AND from_agent != ? AND to_agent LIKE '#%' ORDER BY seq", since, agent)
+      .toArray()
+      .filter((row) => this.hears(who, row));
+    missed.push(...heard);
+    missed.sort((a, b) => a.seq - b.seq);
     // …and messages for its owner that waited because none of theirs was online.
     if (this.choose(who.owner) === agent) {
       const held = this.sql.exec("SELECT * FROM messages WHERE to_agent IS NULL AND to_owner = ? ORDER BY seq", who.owner).toArray();
@@ -226,12 +278,16 @@ export class Line {
     if (body.length > MAX_BODY) return this.send(ws, JSON.stringify({ t: "error", error: "message too large", id }));
     let toAgent = null;
     let toOwner = null;
+    const mentions = (Array.isArray(frame.mentions) ? frame.mentions : []).map((m) => String(m).toLowerCase()).filter((m) => OWNER.test(m)).slice(0, 50);
     if (to === "*") toAgent = "*";
-    else if (to.startsWith("@") && AGENT.test(`${to.slice(1)}/x`)) {
+    else if (CHANNEL.test(to)) {
+      if (!this.isMember(to, who.owner)) return this.send(ws, JSON.stringify({ t: "error", error: `join ${to} first`, id }));
+      toAgent = to;
+    } else if (to.startsWith("@") && AGENT.test(`${to.slice(1)}/x`)) {
       toOwner = to.slice(1);
       toAgent = this.choose(toOwner);
     } else if (AGENT.test(to)) toAgent = to;
-    else return this.send(ws, JSON.stringify({ t: "error", error: "to must be owner/name, @owner or *", id }));
+    else return this.send(ws, JSON.stringify({ t: "error", error: "to must be owner/name, @owner, #channel or *", id }));
 
     const now = Date.now();
     this.sql.exec("DELETE FROM messages WHERE ts < ?", now - RETENTION_MS);
@@ -239,7 +295,7 @@ export class Line {
     const blobIds = (Array.isArray(frame.blobs) ? frame.blobs : []).map(String).filter((b) => BLOB.test(b)).slice(0, 20);
     const row = this.sql
       .exec(
-        "INSERT INTO messages (id, from_agent, to_agent, to_owner, reply_to, body, ts, blobs) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+        "INSERT INTO messages (id, from_agent, to_agent, to_owner, reply_to, body, ts, blobs, mentions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
         id,
         who.agent,
         toAgent,
@@ -248,13 +304,14 @@ export class Line {
         body,
         now,
         blobIds.join(","),
+        mentions.length ? `,${mentions.join(",")},` : "",
       )
       .one();
     const envelope = JSON.stringify(this.envelope(row));
     let delivered = [];
     for (const { ws: other, who: them } of this.members()) {
       if (other === ws) continue;
-      if (toAgent === "*" || them.agent === toAgent) {
+      if (toAgent === "*" || them.agent === toAgent || (toAgent?.startsWith("#") && this.hears(them, row))) {
         this.send(other, envelope);
         delivered.push(them.agent);
       }
@@ -274,6 +331,7 @@ export class Line {
       reply_to: row.reply_to,
       body: row.body,
       ts: row.ts,
+      mentions: String(row.mentions || "").split(",").filter(Boolean),
     };
   }
 

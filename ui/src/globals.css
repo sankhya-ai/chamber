@@ -1,0 +1,111 @@
+/* chamber: Slack's layout and Linear's calm, in root's (Tura's) design language:
+ * - the ground is ruled paper (a fine 45° hatch); the main area floats on it as one card
+ * - primary buttons are ink pills, never gradients; the brand dot is Tura blue
+ * - orange is a micro-signal only: "waiting on you"
+ * Tokens are shadcn's, so the components copied from company-brain just work. */
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--accent);
+  --color-secondary-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-waiting: var(--waiting);
+  --color-online: var(--online);
+  --color-dot: var(--dot);
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: #1b1c1f;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --primary: #17181b; /* ink */
+  --primary-foreground: #ffffff;
+  --muted: #f4f4f3;
+  --muted-foreground: #6b6f76;
+  --accent: #efefed;
+  --destructive: #c4553f;
+  --border: #e4e4e1;
+  --ring: #4e83b0;
+  --sidebar: transparent;
+  --waiting: #e3a473;
+  --online: #70852f;
+  --dot: #4e83b0;
+  --ground:
+    repeating-linear-gradient(-45deg, rgba(23, 57, 76, 0) 0 2px, rgba(23, 57, 76, 0.035) 2px 4px),
+    linear-gradient(#f6f5f1, #f1f0ec);
+}
+
+.dark {
+  --background: #101113;
+  --foreground: #ebecee;
+  --card: #16171a;
+  --popover: #1b1c1f;
+  --primary: #f4f5f8; /* ink, inverted */
+  --primary-foreground: #101113;
+  --muted: #1b1c1f;
+  --muted-foreground: #8a8f98;
+  --accent: #222327;
+  --destructive: #d9725c;
+  --border: #26272b;
+  --ring: #4e83b0;
+  --sidebar: transparent;
+  --waiting: #e3a473;
+  --online: #8ba44a;
+  --dot: #4e83b0;
+  --ground:
+    repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0) 0 2px, rgba(255, 255, 255, 0.027) 2px 4px),
+    linear-gradient(#050506, #0a0a0c);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply text-foreground font-sans antialiased;
+    background: var(--ground);
+    background-attachment: fixed;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 30%, transparent);
+  }
+}
+
+/* Thin, quiet scrollbars, like Linear. */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}

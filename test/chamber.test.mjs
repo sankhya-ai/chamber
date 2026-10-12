@@ -405,3 +405,54 @@ test("the admin makes the chamber and invites; teammates only join", async () =>
   await run(["join", `${relay}/#${secret}`, "--as", "nitin"], { home: mate });
   assert.match((await run(["invite"], { home: mate })).stderr, /only your chamber's admin/);
 });
+
+test("channels: boards hear everything, Claude Code only @mentions; offline gets it later", async () => {
+  const invite = await Invite.create(relay).ready();
+  const cursor = join(tmp("chan"), "cursor.json");
+  const inbox = (client) => {
+    const got = [];
+    client.onMessage = (m) => got.push(m);
+    return got;
+  };
+  const ashBoard = await join_(invite, "ashish/board", { kind: "human", listens: true });
+  const ashCode = await join_(invite, "ashish/claude-code.api", { kind: "claude-code", answers: true, cursorPath: cursor });
+  const nitBoard = await join_(invite, "nitin/board", { kind: "human", listens: true });
+  const boardGot = inbox(ashBoard);
+  const codeGot = inbox(ashCode);
+  await sleep(200);
+  assert.ok(nitBoard.channels.some((c) => c.name === "#general" && c.members.includes("ashish")), "everyone starts in #general");
+
+  await nitBoard.send("#general", "Deploying at 5.");
+  await sleep(400);
+  assert.deepEqual(boardGot.map((m) => m.text), ["Deploying at 5."]);
+  assert.equal(codeGot.length, 0, "plain channel chatter does not wake Claude Code");
+
+  const asked = await nitBoard.send("#general", "@ashish can your agent review the auth PR?");
+  assert.deepEqual(asked.mentions, ["ashish"]);
+  await sleep(400);
+  assert.equal(codeGot.at(-1)?.text, "@ashish can your agent review the auth PR?");
+  assert.equal(codeGot.at(-1).to, "#general");
+  assert.deepEqual(codeGot.at(-1).mentions, ["ashish"]);
+
+  // Offline: a mention waits for the agent.
+  ashCode.close();
+  await sleep(300);
+  await nitBoard.send("#general", "@ashish ping while you were away");
+  const back = await join_(invite, "ashish/claude-code.api", { kind: "claude-code", answers: true, cursorPath: cursor });
+  const later = inbox(back);
+  await sleep(500);
+  assert.deepEqual(later.map((m) => m.text), ["@ashish ping while you were away"]);
+
+  // A new channel: only members hear it; a non-member must join first.
+  await nitBoard.channel("join", "#backend");
+  await sleep(200);
+  const before = boardGot.length;
+  await nitBoard.send("#backend", "schema changed");
+  await sleep(300);
+  assert.equal(boardGot.length, before, "not a member, not delivered");
+  await assert.rejects(ashBoard.send("#backend", "hi"), /join #backend first/);
+  await ashBoard.channel("join", "#backend");
+  await sleep(200);
+  await ashBoard.send("#backend", "joined, reading now");
+  for (const c of [ashBoard, back, nitBoard]) c.close();
+});

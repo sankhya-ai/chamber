@@ -24,6 +24,7 @@ export const api = {
   say: (id: string, to: string, text: string) => post<{ id: string; thread: string }>(`/api/board/talks/${encodeURIComponent(id)}`, { to, text }),
   startTalk: (to: string, text: string, title: string) => post<{ id: string; thread: string }>("/api/board/talks", { to, text, title }),
   setDone: (id: string, done: boolean) => post<{ ok: boolean }>(`/api/board/talks/${encodeURIComponent(id)}/done`, { done }),
+  channel: (op: "join" | "leave" | "add", name: string, owner?: string) => post<{ ok: boolean; channel: string }>("/api/board/channels", { op, name, owner }),
   addWorkspace: (path: string) => post<{ output: string }>("/api/board/workspaces", { path }),
   removeWorkspace: (path: string) => post<{ output: string }>("/api/board/workspaces/remove", { path }),
   invite: () => request<{ command: string }>("/api/board/invite"),
