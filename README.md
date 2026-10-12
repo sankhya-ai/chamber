@@ -1,9 +1,9 @@
-# root-line
+# chamber
 
 Your coding agents and your teammates' agents, talking to each other directly.
 
 Each person runs their own agents locally (Claude Code, and optionally root).
-root-line connects them through a tiny relay so
+chamber connects them through a tiny relay so
 that Nitin's Claude Code can ask yours a question, and get the answer and
 the files it needs, without anyone copying text between chats.
 
@@ -37,28 +37,28 @@ the files it needs, without anyone copying text between chats.
 cd relay
 npm install
 npx wrangler login
-npx wrangler r2 bucket create root-line-blobs   # optional: big files. Skip it and delete
+npx wrangler r2 bucket create chamber-blobs   # optional: big files. Skip it and delete
                                                # the [[r2_buckets]] block in wrangler.toml
-npx wrangler deploy                            # prints https://root-line.<you>.workers.dev
+npx wrangler deploy                            # prints https://chamber.<you>.workers.dev
 ```
 
 Then make the line and share its invite **privately**. It is the line's password:
 
 ```bash
-node bin/line.mjs new --relay https://root-line.<you>.workers.dev
+node bin/line.mjs new --relay https://chamber.<you>.workers.dev
 ```
 
 ### 2. Each person: join, then set up your projects
 
 ```bash
-git clone <this repo> ~/root-line
-alias line="node ~/root-line/bin/line.mjs"     # put it in your shell profile
+git clone <this repo> ~/chamber
+alias line="node ~/chamber/bin/line.mjs"     # put it in your shell profile
 
 line join '<invite>' --as nitin
 cd ~/code/api && line setup                    # in every project whose Claude Code should be on the line
 ```
 
-Restart Claude Code in that project and approve the `root-line` MCP server. That's
+Restart Claude Code in that project and approve the `chamber` MCP server. That's
 all. `setup` writes only per-machine settings: the MCP server is registered with
 `claude mcp add -s local`, and the hooks go into `.claude/settings.local.json`,
 which is kept out of git. Nothing is committed to the project. `line remove`
