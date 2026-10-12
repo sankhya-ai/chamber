@@ -4,6 +4,8 @@
 //   chamber board                   open the board: every conversation your agents are in
 //   chamber invite                  (admin) a personal join command for one teammate
 //   chamber members                 who is in the chamber
+//   chamber memory [path]           read the team's memory (MEMORY.md)
+//   chamber dream                   tidy the team's memory now (needs OPENROUTER_API_KEY)
 //   chamber revoke <name>           (admin) remove a teammate
 //   chamber setup                   put the Claude Code of the project you are in in the chamber
 //   chamber status                  who is in the chamber
@@ -100,6 +102,19 @@ async function main() {
       if (!isAdmin(needConfig())) throw new LineError("only your chamber's admin invites people: ask them for the join command");
       const { inviteCommand } = await import("../lib/admin.mjs");
       console.log(`Send this to one teammate, privately (it is their personal key to the chamber). They run it inside their project:\n\n  ${await inviteCommand(needConfig())}`);
+      return 0;
+    }
+    case "dream": {
+      const { dream } = await import("../lib/dream.mjs");
+      const result = await dream(needConfig(), { log: (kind, text) => console.log(`  ${kind === "write" ? "✎" : "·"} ${text}`) });
+      console.log(result.ok ? `Dreamt: ${result.message} (${result.changes.length} file(s) changed, ${result.steps} steps)` : `No dream: ${result.reason}`);
+      return result.ok ? 0 : 1;
+    }
+    case "memory": {
+      const { TeamMemory, ENTRY } = await import("../lib/memory.mjs");
+      const config = needConfig();
+      const file = await new TeamMemory(config.invite, `${config.owner}/terminal`).read(positionals[0] || ENTRY);
+      console.log(file?.text ?? "(empty)");
       return 0;
     }
     case "members": {
@@ -203,7 +218,7 @@ async function main() {
       return wait(opts.agent || "claude-code");
     }
     default:
-      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 17).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 19).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
       return command ? 1 : 0;
   }
 }

@@ -25,6 +25,10 @@
 // use it, and the admin can revoke a member (a signed order). Without ADMIN_KEY, anyone
 // with the chamber key may join (the original, open mode).
 //
+// Team memory: a small versioned store of markdown files (sealed by the clients like
+// messages), with Devin's rule for concurrent writers: a commit names the version of each
+// file it was based on, and is rejected with the current versions if any moved.
+//
 // A relay can be private: with the secret ALLOWED_LINES (comma-separated chamber ids, set by
 // create.sh) it serves only those chambers, so a public URL is not an open relay.
 //
@@ -46,6 +50,9 @@ const OWNER = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 const BLOB = /^[0-9a-f]{32}$/;
 const MAX_BLOB = 25 * 1024 * 1024;
 const IDLE_WIPE_MS = 10 * 60 * 1000;
+const MAX_MEMORY_FILE = 400_000; // sealed, base64
+const MAX_MEMORY_FILES = 2000;
+const MEMORY_PATH = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}\.md$/;
 
 async function lineOf(token) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
@@ -62,7 +69,7 @@ export default {
     if (url.pathname === "/") return new Response("chamber relay\n");
     const served = install(url);
     if (served) return served;
-    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|roster|members|admin|blobs\/([^/]+))$/);
+    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|roster|members|admin|memory(?:\/(?:file|commit|history))?|blobs\/([^/]+))$/);
     if (!match) return json({ error: "not found" }, 404);
     const [, line, what, blob] = match;
     const token = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
@@ -72,7 +79,7 @@ export default {
     if (blob !== undefined) return blobs(request, env, line, blob);
     if (what === "ws" && request.headers.get("upgrade") !== "websocket") return json({ error: "expected a WebSocket" }, 426);
     const stub = env.LINES.get(env.LINES.idFromName(line));
-    const forwarded = new Request(`https://line/${what}`, request);
+    const forwarded = new Request(`https://line/${what}${url.search}`, request);
     forwarded.headers.set("x-line", line);
     return stub.fetch(forwarded);
   },
@@ -137,6 +144,10 @@ export class Line {
     // Personal invites: which member holds a name, and members the admin removed.
     this.sql.exec("CREATE TABLE IF NOT EXISTS names (owner TEXT PRIMARY KEY, member TEXT NOT NULL, since INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS revoked (member TEXT PRIMARY KEY, at INTEGER NOT NULL)");
+    // Team memory.
+    this.sql.exec("CREATE TABLE IF NOT EXISTS mem_files (path TEXT PRIMARY KEY, version INTEGER NOT NULL, body TEXT NOT NULL, author TEXT NOT NULL, ts INTEGER NOT NULL)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS mem_versions (path TEXT NOT NULL, version INTEGER NOT NULL, body TEXT, PRIMARY KEY (path, version))");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS mem_commits (seq INTEGER PRIMARY KEY AUTOINCREMENT, author TEXT NOT NULL, message TEXT NOT NULL, changes TEXT NOT NULL, ts INTEGER NOT NULL)");
   }
 
   // ----- channels ---------------------------------------------------------------
@@ -191,6 +202,11 @@ export class Line {
       return json({ personal: Boolean(this.env.ADMIN_KEY), members: rows.map((r) => ({ ...r, online: online.has(r.owner) })) });
     }
     if (what === "admin") return this.admin(await request.json().catch(() => ({})));
+    if (what.startsWith("memory")) {
+      const refused = await this.memberCheck(request.headers.get("x-chamber-pass"));
+      if (refused) return json({ error: refused }, 403);
+      return this.memory(what, request);
+    }
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
     return new Response(null, { status: 101, webSocket: pair[0] });
@@ -229,6 +245,69 @@ export class Line {
     } catch {
       // closing; the roster update on close covers it
     }
+  }
+
+  // ----- team memory -------------------------------------------------------------------
+
+  /** With personal invites, memory is for members only: a valid, unrevoked pass. */
+  async memberCheck(pass) {
+    if (!this.env.ADMIN_KEY) return null;
+    const claims = await signedByAdmin(this.env, pass);
+    const line = this.line || (await this.ctx.storage.get("line"));
+    if (!claims || claims.line !== line || !claims.member) return "team memory is for members: a personal invite is needed";
+    if (this.sql.exec("SELECT 1 FROM revoked WHERE member = ?", claims.member).toArray().length) return "you were removed from this chamber by its admin";
+    return null;
+  }
+
+  async memory(what, request) {
+    const url = new URL(request.url);
+    if (what === "memory") {
+      const head = this.sql.exec("SELECT MAX(seq) AS head FROM mem_commits").one().head ?? 0;
+      return json({ head, files: this.sql.exec("SELECT path, version, author, ts FROM mem_files ORDER BY path").toArray() });
+    }
+    if (what === "memory/file") {
+      const path = url.searchParams.get("path") || "";
+      const version = Number(url.searchParams.get("version") || 0);
+      const row = version
+        ? this.sql.exec("SELECT path, version, body FROM mem_versions WHERE path = ? AND version = ?", path, version).toArray()[0]
+        : this.sql.exec("SELECT path, version, body FROM mem_files WHERE path = ?", path).toArray()[0];
+      return row ? json(row) : json({ error: "no such file" }, 404);
+    }
+    if (what === "memory/history") {
+      const limit = Math.min(200, Number(url.searchParams.get("limit") || 50));
+      const rows = this.sql.exec("SELECT seq, author, message, changes, ts FROM mem_commits ORDER BY seq DESC LIMIT ?", limit).toArray();
+      return json({ commits: rows.map((r) => ({ ...r, changes: JSON.parse(r.changes) })) });
+    }
+    // memory/commit: { author, message, changes: [{ path, base, body | null }] }, all or nothing.
+    if (request.method !== "POST") return json({ error: "POST a commit" }, 405);
+    const commit = await request.json().catch(() => null);
+    const changes = Array.isArray(commit?.changes) ? commit.changes : [];
+    if (!changes.length || changes.length > 50) return json({ error: "a commit changes 1 to 50 files" }, 400);
+    for (const c of changes) {
+      if (!MEMORY_PATH.test(String(c.path || "")) || String(c.path).includes("..")) return json({ error: `bad path: ${c.path}` }, 400);
+      if (c.body !== null && (typeof c.body !== "string" || c.body.length > MAX_MEMORY_FILE)) return json({ error: `${c.path} is too large` }, 413);
+    }
+    const stale = changes
+      .map((c) => ({ c, row: this.sql.exec("SELECT path, version, body FROM mem_files WHERE path = ?", c.path).toArray()[0] }))
+      .filter(({ c, row }) => (row?.version ?? 0) !== Number(c.base || 0));
+    if (stale.length) return json({ error: "stale", current: stale.map(({ c, row }) => row ?? { path: c.path, version: 0, body: null }) }, 409);
+    const count = this.sql.exec("SELECT COUNT(*) AS n FROM mem_files").one().n;
+    if (count + changes.filter((c) => c.body !== null && !Number(c.base)).length > MAX_MEMORY_FILES) return json({ error: "memory is full" }, 413);
+    const now = Date.now();
+    const author = String(commit.author || "").slice(0, 80);
+    const applied = [];
+    for (const c of changes) {
+      const highest = this.sql.exec("SELECT MAX(version) AS v FROM mem_versions WHERE path = ?", c.path).one().v ?? 0;
+      const to = Math.max(Number(c.base || 0), highest) + 1; // a re-created file continues its history
+      this.sql.exec("INSERT OR REPLACE INTO mem_versions (path, version, body) VALUES (?, ?, ?)", c.path, to, c.body);
+      if (c.body === null) this.sql.exec("DELETE FROM mem_files WHERE path = ?", c.path);
+      else this.sql.exec("INSERT OR REPLACE INTO mem_files (path, version, body, author, ts) VALUES (?, ?, ?, ?, ?)", c.path, to, c.body, author, now);
+      applied.push({ path: c.path, from: Number(c.base || 0), to, deleted: c.body === null });
+    }
+    const row = this.sql.exec("INSERT INTO mem_commits (author, message, changes, ts) VALUES (?, ?, ?, ?) RETURNING seq", author, String(commit.message || "").slice(0, 500), JSON.stringify(applied), now).one();
+    const frame = JSON.stringify({ t: "memory", head: row.seq, author, changes: applied });
+    for (const { ws } of this.members()) this.send(ws, frame);
+    return json({ ok: true, seq: row.seq, changes: applied });
   }
 
   // ----- the admin ----------------------------------------------------------------

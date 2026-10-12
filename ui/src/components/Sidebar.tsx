@@ -1,4 +1,4 @@
-import { Check, Hash, Inbox, Layers, Moon, Plus, Search, Sun, UserPlus, Users, X } from "lucide-react";
+import { BookOpen, Check, Hash, Inbox, Layers, Moon, Plus, Search, Sun, UserPlus, Users, X } from "lucide-react";
 import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
@@ -104,6 +104,9 @@ export function Sidebar({ data, view, dark, onView, onSearch, onNewChannel, onIn
         </Row>
         <Row active={same(view, { kind: "all" })} onClick={() => onView({ kind: "all" })}>
           <Layers className="size-4" /> All talks
+        </Row>
+        <Row active={same(view, { kind: "memory" })} onClick={() => onView({ kind: "memory" })}>
+          <BookOpen className="size-4" /> Memory
         </Row>
 
         <Section title="Channels" action={<IconButton label="New or join a channel" onClick={onNewChannel}><Plus className="size-3.5" /></IconButton>}>

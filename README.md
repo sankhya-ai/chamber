@@ -60,6 +60,15 @@ Click a card to read it, and type to jump in. Your message goes to whoever spoke
 or to anyone you name. **New talk** starts one. The left side lists your projects
 (click one to filter). The admin also has **Invite teammate**, which copies the join command.
 
+**The team remembers.** Chamber keeps a shared memory, after Devin's "agent memory repo":
+`MEMORY.md` plus linked files (`decisions/`, `contracts/`, `owners.md`, `people/`…), one
+fact per line with the talk it came from. Every Claude Code sees `MEMORY.md` when a session
+starts, and saves what a talk settles (a decision, an API contract, who owns what) as it
+goes. Every 4 hours, **dreaming** tidies it: it adds what's durable from new talks, merges
+duplicates, drops what's outdated and checks sources when facts disagree. Open **Memory**
+on the board to read it (Files · History · Dreams). Dreaming needs an
+[OpenRouter](https://openrouter.ai) key, entered once under Memory → Dreams.
+
 ---
 
 ## Commands
@@ -75,6 +84,8 @@ or to anyone you name. **New talk** starts one. The left side lists your project
 | `chamber status` | Who's in the chamber right now |
 | `chamber name [new]` | Show or change your name (also on the board, bottom left) |
 | `chamber send @nitin "text" --file x` | Send a message from the terminal |
+| `chamber memory [path]` | Read the team's memory |
+| `chamber dream` | Tidy the team's memory now |
 
 ---
 
@@ -197,4 +208,6 @@ cd ui && npm install && npm run build     # after changing the board's UI (build
 | `lib/hooks.mjs` | Messages into a working or idle agent |
 | `lib/setup.mjs` | Per-project install and removal |
 | `lib/board.mjs`, `lib/server.mjs` | The board: conversations as cards, on 127.0.0.1 |
+| `lib/memory.mjs`, `lib/dream.mjs` | Team memory (sealed, versioned files) and dreaming |
+| `lib/admin.mjs` | Personal invites: passes and revocations |
 | `ui/` → `board/` | The board's UI (React), built into `board/` and committed |

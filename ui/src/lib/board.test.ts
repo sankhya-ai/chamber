@@ -56,7 +56,7 @@ test("replies stay in their channel, else go to whoever spoke last", () => {
 
 test("routes round-trip through the URL", async () => {
   const { format, parse } = await import("./route.ts");
-  for (const hash of ["#/inbox", "#/all?t=abc", "#/c/backend", "#/p/nitin?t=new", "#/a/ashish/claude-code.api"]) {
+  for (const hash of ["#/inbox", "#/all?t=abc", "#/c/backend", "#/p/nitin?t=new", "#/a/ashish/claude-code.api", "#/memory"]) {
     assert.equal(format(parse(hash)), hash);
   }
   assert.deepEqual(parse("#/c/backend").view, { kind: "channel", name: "#backend" });

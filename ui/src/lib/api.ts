@@ -2,6 +2,19 @@
 
 import type { BoardData, Talk } from "./board.ts";
 
+export interface Dream {
+  ts: number;
+  ms: number;
+  ok: boolean;
+  message: string;
+  reason: string;
+  inbox: number;
+  steps: number;
+  cost: number;
+  model: string;
+  changes: string[];
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { ...init, headers: { "Content-Type": "application/json", ...(init.headers ?? {}) } });
   if (!response.ok) {
@@ -28,6 +41,14 @@ export const api = {
   addWorkspace: (path: string) => post<{ output: string }>("/api/board/workspaces", { path }),
   removeWorkspace: (path: string) => post<{ output: string }>("/api/board/workspaces/remove", { path }),
   invite: () => request<{ command: string }>("/api/board/invite"),
+  memory: () => request<{ files: { path: string; version: number; author: string; ts: number }[] }>("/api/board/memory"),
+  memoryFile: (path: string, version = 0) => request<{ path: string; version: number; text: string | null }>(`/api/board/memory/file?path=${encodeURIComponent(path)}${version ? `&version=${version}` : ""}`),
+  memoryHistory: () => request<{ commits: { seq: number; author: string; message: string; ts: number; changes: { path: string; from: number; to: number; deleted: boolean }[] }[] }>("/api/board/memory/history"),
+  memorySearch: (q: string) => request<{ hits: { path: string; line: number; text: string }[] }>(`/api/board/memory/search?q=${encodeURIComponent(q)}`),
+  dreams: () => request<{ dreams: Dream[]; running: { started: number; log: { kind: string; text: string; ts: number }[] } | null }>("/api/board/memory/dreams"),
+  dream: () => post<{ started: boolean }>("/api/board/memory/dream"),
+  settings: () => request<{ hasKey: boolean; dreamModel: string; lastDream: number }>("/api/board/settings"),
+  saveSettings: (changes: { openrouterKey?: string; dreamModel?: string }) => post<{ hasKey: boolean; dreamModel: string; lastDream: number }>("/api/board/settings", changes),
   members: () => request<{ personal: boolean; members: { owner: string; online: boolean; since: number }[] }>("/api/board/members"),
   revoke: (owner: string) => post<{ ok: boolean }>("/api/board/revoke", { owner }),
   setName: (name: string) => post<{ name: string }>("/api/board/name", { name }),

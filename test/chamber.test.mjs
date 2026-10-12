@@ -58,9 +58,9 @@ after(() => {
   process.kill(-relayProcess.pid, "SIGTERM");
 });
 
-function run(args, { home, input = "", cwd = ROOT } = {}) {
+function run(args, { home, input = "", cwd = ROOT, env = {} } = {}) {
   return new Promise((done) => {
-    const child = spawn(process.execPath, [BIN, ...args], { cwd, env: { ...process.env, CHAMBER_HOME: home } });
+    const child = spawn(process.execPath, [BIN, ...args], { cwd, env: { ...process.env, CHAMBER_HOME: home, ...env } });
     children.add(child);
     let stdout = "";
     let stderr = "";
@@ -125,7 +125,7 @@ test("a project's Claude Code: asked, shown mid-task by the hook, woken when idl
   const server = mcp(home, "claude-code.api", project);
   const init = await server.call("initialize", { protocolVersion: "2025-06-18" });
   assert.match(init.instructions, /ashish\/claude-code\.api/);
-  assert.deepEqual((await server.call("tools/list")).tools.map((t) => t.name), ["agents", "ask", "inbox", "reply"]);
+  assert.deepEqual((await server.call("tools/list")).tools.map((t) => t.name), ["agents", "ask", "inbox", "reply", "memory", "memory_search", "memory_write", "memory_edit"]);
 
   await invite.ready();
   const nitin = await join_(invite, "nitin/root", { kind: "root", answers: true, priority: 10 });
@@ -517,4 +517,62 @@ test("personal invites: a pass per member, names are theirs, the admin revokes",
   } finally {
     process.kill(-relayProc.pid, "SIGTERM");
   }
+});
+
+test("team memory: sealed, versioned, stale writes rejected, Claude's tools, and a dream", async () => {
+  const { TeamMemory } = await import("../lib/memory.mjs");
+  const invite = await Invite.create(relay).ready();
+  const a = new TeamMemory(invite, "ashish/claude-code.api");
+  const b = new TeamMemory(invite, "nitin/claude-code.web");
+
+  assert.equal((await a.write("MEMORY.md", "# Team\n- [[contracts/auth-token]]", "start")).ok, true);
+  const raw = await (await fetch(`${relay}/v1/lines/${invite.lineId}/memory/file?path=MEMORY.md`, { headers: invite.auth })).json();
+  assert.ok(!raw.body.includes("Team"), "the relay stores ciphertext");
+  assert.equal((await b.read("MEMORY.md")).text, "# Team\n- [[contracts/auth-token]]\n");
+
+  // Devin's rule: a write based on an old version is rejected with the current one.
+  const seen = await a.read("MEMORY.md");
+  await b.edit("MEMORY.md", "# Team", "# Team (nitin + ashish)", "rename");
+  const stale = await a.commit([{ path: "MEMORY.md", text: "overwrite", base: seen.version }], "late");
+  assert.equal(stale.ok, false);
+  assert.match(stale.current[0].text, /nitin \+ ashish/);
+  assert.equal((await a.search("nitin ashish"))[0].path, "MEMORY.md");
+  assert.deepEqual((await a.history()).map((c) => c.message), ["rename", "start"]);
+  assert.equal((await a.read("MEMORY.md", 1)).text.startsWith("# Team\n"), true, "older versions stay readable");
+
+  // Claude Code's memory tools, through the MCP server.
+  const home = tmp("mem");
+  await run(["join", String(invite), "--as", "ashish"], { home });
+  const server = mcp(home, "claude-code.api", tmp("proj"));
+  await server.call("initialize", {});
+  assert.match((await server.tool("memory")).text, /nitin \+ ashish/);
+  assert.match((await server.tool("memory_write", { path: "contracts/auth-token.md", content: "- expires_in is an int (UNIX epoch) [source: talk/x#1; by: nitin; added: 2026-10-12]", message: "auth contract" })).text, /Saved/);
+  assert.match((await server.tool("memory_search", { query: "expires_in epoch" })).text, /contracts\/auth-token.md:1/);
+  server.close();
+
+  // A dream, against a scripted model: reads, merges, commits once.
+  const { createServer } = await import("node:http");
+  const script = [
+    [{ name: "list_files", args: {} }],
+    [{ name: "read_file", args: { path: "MEMORY.md" } }],
+    [{ name: "write_file", args: { path: "owners.md", content: "- nitin owns tura-website billing [source: talk/x#1; by: nitin; added: 2026-10-12]" } }],
+    [{ name: "write_file", args: { path: "MEMORY.md", content: "# Team (nitin + ashish)\n- [[contracts/auth-token]] · [[owners]]" } }],
+    [{ name: "commit", args: { message: "added owners; linked from MEMORY.md" } }],
+  ];
+  let step = 0;
+  const llm = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      const calls = script[step++] ?? [{ name: "commit", args: { message: "done" } }];
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ choices: [{ message: { content: "", tool_calls: calls.map((c, i) => ({ id: `c${step}${i}`, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args) } })) } }], usage: { cost: 0.001 } }));
+    });
+  }).listen(0);
+  await new Promise((r) => llm.once("listening", r));
+  const dreamt = await run(["dream"], { home, env: { OPENROUTER_API_KEY: "test", CHAMBER_LLM_URL: `http://127.0.0.1:${llm.address().port}` } });
+  llm.close();
+  assert.equal(dreamt.code, 0, dreamt.stdout + dreamt.stderr);
+  assert.match(dreamt.stdout, /Dreamt: added owners; linked from MEMORY.md \(2 file\(s\) changed/);
+  assert.match((await a.read("owners.md")).text, /nitin owns tura-website billing/);
+  assert.equal((await a.history())[0].message, "dream: added owners; linked from MEMORY.md");
 });

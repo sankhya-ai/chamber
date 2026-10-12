@@ -1,4 +1,4 @@
-import { Hash, Inbox, Layers, MessageSquarePlus, Moon, UserPlus } from "lucide-react";
+import { BookOpen, Hash, Inbox, Layers, MessageSquarePlus, Moon, UserPlus } from "lucide-react";
 
 import { Avatar } from "@/components/Avatar";
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
@@ -34,6 +34,7 @@ export function CommandMenu({ open, onOpenChange, data, onView, onTalk, onNewTal
         <CommandGroup heading="Go to">
           <CommandItem onSelect={run(() => onView({ kind: "inbox" }))}><Inbox /> Inbox</CommandItem>
           <CommandItem onSelect={run(() => onView({ kind: "all" }))}><Layers /> All talks</CommandItem>
+          <CommandItem onSelect={run(() => onView({ kind: "memory" }))}><BookOpen /> Memory</CommandItem>
           {(data?.channels ?? []).filter((c) => c.joined).map((c) => (
             <CommandItem key={c.name} value={c.name} onSelect={run(() => onView({ kind: "channel", name: c.name }))}><Hash /> {c.name.slice(1)}</CommandItem>
           ))}

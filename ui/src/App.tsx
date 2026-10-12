@@ -5,6 +5,7 @@ import { CommandMenu } from "@/components/CommandMenu";
 import { Composer } from "@/components/Composer";
 import { Conversation } from "@/components/Conversation";
 import { ChannelDialog, InviteDialog, MembersDialog } from "@/components/Dialogs";
+import { MemoryView } from "@/components/MemoryView";
 import { Sidebar } from "@/components/Sidebar";
 import { TalkList } from "@/components/TalkList";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,7 @@ const EMPTY: Record<View["kind"], string> = {
   channel: "Nothing said here yet.",
   person: "You haven't talked yet.",
   agent: "This agent hasn't talked with anyone yet.",
+  memory: "",
 };
 
 export function App() {
@@ -142,7 +144,7 @@ export function App() {
             <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
               <h1 className="font-semibold capitalize">{titleOf(route.view, me)}</h1>
               {error ? <span className="truncate text-[12px] text-destructive">{error}</span> : null}
-              <div className="ml-auto flex items-center gap-1">
+              <div className={cn("ml-auto flex items-center gap-1", route.view.kind === "memory" && "hidden")}>
                 <div className="flex rounded-md border p-0.5">
                   {(["list", "board"] as const).map((l) => (
                     <button
@@ -164,7 +166,11 @@ export function App() {
               </div>
             </header>
 
-            <TalkList cards={cards} me={me} layout={layout} open={route.talk} onOpen={openTalk} empty={EMPTY[route.view.kind]} />
+            {route.view.kind === "memory" ? (
+              <MemoryView onTalk={(id) => go({ view: { kind: "all" }, talk: id })} />
+            ) : (
+              <TalkList cards={cards} me={me} layout={layout} open={route.talk} onOpen={openTalk} empty={EMPTY[route.view.kind]} />
+            )}
 
             {here && !route.talk ? (
               <div className="border-t pt-3">

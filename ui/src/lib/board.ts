@@ -69,7 +69,8 @@ export type View =
   | { kind: "all" }
   | { kind: "channel"; name: string }
   | { kind: "person"; owner: string }
-  | { kind: "agent"; agent: string };
+  | { kind: "agent"; agent: string }
+  | { kind: "memory" };
 
 export const STATUSES: { status: Status; label: string }[] = [
   { status: "waiting", label: "Waiting on you" },
@@ -125,6 +126,8 @@ export function inView(cards: Card[], view: View): Card[] {
       return cards.filter((c) => !c.channel && c.with.some((p) => ownerOf(p) === view.owner));
     case "agent":
       return cards.filter((c) => c.people.includes(view.agent));
+    case "memory":
+      return [];
   }
 }
 
@@ -141,6 +144,7 @@ export function titleOf(view: View, me: string): string {
   if (view.kind === "all") return "All talks";
   if (view.kind === "channel") return view.name;
   if (view.kind === "person") return cap(view.owner);
+  if (view.kind === "memory") return "Memory";
   return who(view.agent, me);
 }
 

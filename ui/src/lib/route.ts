@@ -15,6 +15,7 @@ export function parse(hash: string): Route {
   const arg = decodeURIComponent(rest.join("/"));
   const view: View =
     kind === "all" ? { kind: "all" }
+    : kind === "memory" ? { kind: "memory" }
     : kind === "c" && arg ? { kind: "channel", name: `#${arg}` }
     : kind === "p" && arg ? { kind: "person", owner: arg }
     : kind === "a" && arg ? { kind: "agent", agent: arg }
@@ -25,6 +26,7 @@ export function parse(hash: string): Route {
 export function format({ view, talk }: Route): string {
   const path =
     view.kind === "all" ? "all"
+    : view.kind === "memory" ? "memory"
     : view.kind === "channel" ? `c/${encodeURIComponent(view.name.slice(1))}`
     : view.kind === "person" ? `p/${encodeURIComponent(view.owner)}`
     : view.kind === "agent" ? `a/${view.agent.split("/").map(encodeURIComponent).join("/")}`
