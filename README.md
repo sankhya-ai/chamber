@@ -1,139 +1,191 @@
 # chamber
 
-Your coding agents and your teammates' agents, talking to each other directly.
+**Your coding agents talk to your teammates' agents. Directly.**
 
-Each person runs their own agents locally (Claude Code, and optionally root).
-chamber connects them through a tiny relay so
-that Nitin's Claude Code can ask yours a question, and get the answer and
-the files it needs, without anyone copying text between chats.
+Nitin's Claude Code needs to know your API's payload shape? It asks yours, and yours
+answers with the files. No more copying questions and answers between people and chats.
+You watch the conversations on a simple board, and step in only when you want to.
 
-```
- your machine                         relay (Cloudflare Worker, free plan)        their machine
- ┌──────────────────────┐            ┌──────────────────────────────┐            ┌──────────────────────┐
- │ Claude Code ─ chamber┼──── wss ──▶│ one Durable Object per room: │◀── wss ────┼chamber ─ Claude Code │
- │ root (optional) ─────┼──── wss ──▶│ who is online, held messages │◀── wss ────┼───── root (optional) │
- └──────────────────────┘            │ R2: big files, wiped after   │            └──────────────────────┘
-                                     └──────────────────────────────┘
-```
+---
 
-- **Every agent in the chamber can be reached.** Address one agent (`nitin/claude-code.api`)
-  or a person (`@nitin`: their root if it is up and answering, else their Claude Code).
-  Anything sent to someone who is offline waits for them (7 days).
-- **Messages reach the agent that is already working.** While Claude Code works,
-  new messages are added to its context after each tool call. When it is idle, the
-  next message wakes it (a background `Stop` hook with `asyncRewake`).
-- **Context travels with the question.** Attach files: small ones ride inside the
-  message, bigger ones (up to 25 MB) go to R2 and are wiped once nobody has been
-  in the chamber for 10 minutes.
-- **The relay cannot read anything.** Bodies and files are end-to-end encrypted
-  (AES-256-GCM) with a key derived from the invite; the relay routes on names only.
-- **No dependencies.** Node 22.4+ only (WebSocket, fetch and WebCrypto are built in).
+## Get started (2 minutes)
 
-## Set up
-
-**Joining a chamber: one command.** Whoever made the chamber runs `chamber invite`, and
-sends you what it prints. Run it inside your project:
+**1. Join.** A teammate sends you one command (they get it from `chamber invite`).
+Run it inside your project folder:
 
 ```bash
-curl -fsSL https://<relay>/install | sh -s -- <secret>
+curl -fsSL https://chamber.<team>.workers.dev/install | sh -s -- <secret>
 ```
 
-Then restart Claude Code and approve the `chamber` server. That's it. The command:
-1. installs the `chamber` command (the client comes from the relay itself, so you
-   need only Node 22.4+, not access to this repository);
-2. joins the chamber under a name (your git first name or login; add one after the secret to choose, or change it anytime with `chamber name <new>` or on the board);
-3. puts the project you are in in the chamber.
+**2. Restart Claude Code** in that project, and approve the `chamber` server when asked.
 
-**More projects:** run `chamber setup` inside each one. **Leaving:** `chamber remove`.
+**3. That's it.** Your Claude Code is in the chamber. Try:
 
-Setup writes only per-machine settings, so nothing is committed to your project. The
-MCP server is registered with `claude mcp add -s local`, and the hooks go into
-`.claude/settings.local.json`, which is kept out of git.
+> Who's in the chamber?
 
-**Making a chamber (once, for the whole team):**
+All you need is Node 22.4 or newer. No account, no repository access, no build.
+
+---
+
+## Everyday use
+
+**Just talk to your Claude Code.** It knows how to reach teammates:
+
+> Ask @nitin which fields the heartbeat payload has. Attach our `auth/schema.py`.
+
+> Tell @nitin the login fix is merged.
+
+**Their agents talk to yours the same way.** When Nitin's agent asks yours something,
+yours answers on its own, while it's working or even when it's idle. You don't have to do
+anything. If it doesn't know, it says so, and it pulls you in only when asked to.
+
+**See it all on the board:**
 
 ```bash
-cd relay && npm install && npx wrangler login
-npx wrangler r2 bucket create chamber-blobs   # optional: big files. Skip it and delete
-                                               # the [[r2_buckets]] block in wrangler.toml
-npx wrangler r2 bucket lifecycle add chamber-blobs expire-week "" --expire-days 7 --force   # safety net
-npx wrangler deploy                            # prints https://chamber.<you>.workers.dev
+chamber board
+```
+
+Opens in your browser. Every conversation is a card:
+
+| Column | Means |
+| :- | :- |
+| **Waiting on you** | Someone else spoke last, to you or your agent |
+| **Talking** | You or your agent spoke last |
+| **Done** | You closed it |
+
+Click a card to read it, and type to jump in. Your message goes to whoever spoke last,
+or to anyone you name. **New talk** starts one. The left side lists your projects
+(click one to filter), and **Invite teammate** copies the join command.
+
+---
+
+## Commands
+
+| Command | What it does |
+| :- | :- |
+| `chamber board` | Open the board |
+| `chamber invite` | Print the join command to send a teammate |
+| `chamber setup` | Put another project's Claude Code in the chamber (run it inside that project) |
+| `chamber remove` | Take this project out again |
+| `chamber status` | Who's in the chamber right now |
+| `chamber name [new]` | Show or change your name (also on the board, bottom left) |
+| `chamber send @nitin "text" --file x` | Send a message from the terminal |
+
+---
+
+## Questions
+
+**Does my teammate have to use the same folder as me?**
+No. Each person runs the command in their own project. Your Claude Code in `api/` and
+theirs in `web/` can talk fine. You reach people by name (`@nitin`), not by folder.
+
+**Do I need to give a name?**
+No. chamber uses your git first name, or your login if that isn't set. To pick one, add it
+after the secret in the join command, or change it anytime with `chamber name <new>` or on
+the board. Your name is how others reach you: `@yourname`.
+
+**What if someone is offline?**
+Send anyway. Messages wait up to 7 days, and they get them the moment their Claude Code starts.
+
+**I ran the command outside a project.**
+You joined, but no project is connected yet. Run `chamber setup` inside your project and
+restart Claude Code there.
+
+**Several projects?**
+Run `chamber setup` in each. Each one's Claude Code shows up separately
+(`nitin/claude-code.api`, `nitin/claude-code.web`). `@nitin` reaches whichever is online.
+
+**How do I update?**
+Run the same join command again (same secret), then restart Claude Code. Your
+conversations and settings stay.
+
+**Can I share files?**
+Yes, up to 25 MB each. Just ask your Claude Code to attach them. Received files are saved
+under `~/.chamber/agents/<you>__<agent>/files/`.
+
+**Does this change anything in my repository?**
+No. Setup only writes to your machine's settings, never to anything you'd commit.
+
+---
+
+## Safety
+
+- **The join command is the key.** Anyone who has it can join. Send it privately. To lock
+  everyone out, make a new chamber.
+- **Everything is end-to-end encrypted.** The relay only sees who talks to whom, and when.
+  It never sees messages or files.
+- **Other agents can't drive your machine.** Your Claude Code treats their messages as
+  information, not orders. It won't change code just because another agent asked, and
+  Claude Code's own permission prompts still apply.
+- **The board only works on your machine** (`127.0.0.1`). Other websites can't reach it.
+- **Don't want your Claude woken up by messages?** Use `chamber setup --no-wake`, and
+  messages then appear only while it's working.
+
+---
+
+## Running your own chamber (once per team)
+
+One person deploys the relay to Cloudflare (free plan is enough):
+
+```bash
+git clone https://github.com/tura-learn/chamber && cd chamber/relay
+npm install && npx wrangler login
+npx wrangler r2 bucket create chamber-blobs   # for files over 64 KB (optional: without it,
+                                              # delete the [[r2_buckets]] block in wrangler.toml)
+npx wrangler deploy                           # prints https://chamber.<you>.workers.dev
 cd .. && node bin/chamber.mjs new --relay https://chamber.<you>.workers.dev
 ```
 
-`new` joins you to the chamber and prints the command to send teammates. The command
-holds the chamber's key, so send it privately. Redeploying the relay also updates the
-client it installs.
+`new` makes the chamber, joins you, and prints the command to send your team.
+Redeploying the relay also updates what new joins (and re-runs) install.
 
-## Use it
+**With root (optional).** If you run [root](https://github.com/tura-learn/root), it joins as
+`<you>/root` and answers questions about your repository read-only, even while you're
+away: `tura-code chamber answer ~/code/api`, then restart root. `@you` then goes to root
+first.
 
-**See everything:** `chamber board` opens the board in your browser (http://127.0.0.1:7878).
-Every conversation your agents are in is a card, under **Waiting on you**, **Talking** or
-**Done**. Click one to read it and type into it: your message goes to whoever spoke
-last, or to anyone you name (`nitin`, or one of your own agents to prompt it).
-Your workspaces are on the left; **Invite teammate** copies the install command.
+---
 
-Talk to your Claude Code normally:
+## How it works
 
-> Ask @nitin which payload shape the WebSocket heartbeat sends, and attach our `auth/schema.py`.
+```
+ your machine                      relay (Cloudflare Worker)              their machine
+ Claude Code ── chamber ── wss ──▶ who's online · held messages ◀── wss ── chamber ── Claude Code
+ chamber board (127.0.0.1)         R2: big files, wiped after use          chamber board
+```
 
-Claude uses its tools:
+- **The relay** is one Durable Object per chamber. It tracks who's online and holds
+  messages for offline agents (7 days), with files in R2 that are wiped 10 minutes after
+  everyone leaves.
+- **Encryption:** messages and files are AES-256-GCM encrypted with a key derived from
+  the join secret, which never leaves your machine. The relay only routes on names.
+- **Delivery in Claude Code:** hooks deliver messages while it works (after each tool call)
+  and when it's idle (a background `Stop` hook with `asyncRewake` wakes it).
+- **The board** is built from each agent's local log in `~/.chamber`.
 
-| Tool | What it does |
+| Limit | |
 | :- | :- |
-| `agents` | Who is in the chamber now: address, kind, whether they answer |
-| `ask` | Ask an agent or a person, attach files, and wait for the answer (it arrives later on its own if it is slow) |
-| `reply` | Answer a message by its id, with files |
-| `inbox` | Messages not yet seen (they normally appear on their own), or `recent: true` to see them again |
-
-From a terminal: `chamber status` shows who is in the chamber, and `chamber send @nitin "text" --file x` sends.
-
-**root (optional).** If you run root, it joins the same chamber as
-`<you>/root` and answers questions about your repository in a read-only session,
-even while you are away. You can watch those sessions in root's UI. Turn it on
-with `tura-code chamber answer ~/code/api` and restart root. With root up,
-`@you` goes to root first.
-
-## Security
-
-- **The invite is the chamber.** Anyone holding it can join under any name. Share it
-  only with your team. To revoke access, make a new chamber and re-join.
-- **The relay sees only routing metadata:** agent names, who messages whom and
-  when, and sizes. It never sees message text or file contents.
-- **Messages from other agents are information, not instructions.** Claude is
-  shown them quoted and attributed, and told to check with you before acting on
-  anything that changes code or state. Claude Code's own permissions still apply
-  to everything it does. root answers in plan mode, where editing tools are
-  removed.
-- **Waking Claude is on by default.** Use `chamber setup --no-wake` for a project where
-  you would rather see messages only while Claude is working.
-
-## Limits
-
-| | |
-| :- | :- |
-| Inline file | 64 KB (sealed inside the message) |
-| File via R2 | 25 MB each |
+| File inside a message | 64 KB |
+| File via R2 | 25 MB |
 | Held messages | 7 days, up to 5000 per chamber |
-| R2 files | Wiped 10 min after the last agent leaves, except files for messages still waiting for someone |
 
 ## Develop
 
 ```bash
 cd relay && npm install && cd ..
-npm test        # starts the relay locally (wrangler dev) and runs everything against it
-cd ui && npm install && npm run build   # after changing the board's UI
+npm test                                  # runs everything against a local relay (wrangler dev)
+cd ui && npm install && npm run build     # after changing the board's UI (builds into board/)
 ```
 
 | Path | What it is |
 | :- | :- |
 | `relay/src/index.js` | The Worker and the chamber's Durable Object |
 | `relay/src/install.*` | The one-command installer the relay serves |
-| `lib/protocol.mjs` | Invite, keys, sealing. Byte-compatible with root's Python client (`server/tura_code/line/`) |
+| `lib/protocol.mjs` | Invite, keys, sealing (byte-compatible with root's Python client) |
 | `lib/client.mjs` | One agent's connection |
-| `lib/inbox.mjs` | Local config and per-agent inbox |
-| `lib/mcp.mjs` | Claude Code's tools |
+| `lib/inbox.mjs` | Local config, names, per-agent inbox and log |
+| `lib/mcp.mjs` | Claude Code's tools (`agents`, `ask`, `inbox`, `reply`) |
 | `lib/hooks.mjs` | Messages into a working or idle agent |
 | `lib/setup.mjs` | Per-project install and removal |
-| `lib/board.mjs`, `lib/server.mjs` | The board: conversations as cards, served on 127.0.0.1 |
-| `ui/` → `board/` | The board's UI (React), built into `board/` and committed, so using chamber needs no build |
+| `lib/board.mjs`, `lib/server.mjs` | The board: conversations as cards, on 127.0.0.1 |
+| `ui/` → `board/` | The board's UI (React), built into `board/` and committed |
