@@ -1,5 +1,5 @@
 #!/bin/sh
-# Make your own chamber, in one command:
+# Make your own chamber, in one command (for the admin: the person who invites the team):
 #
 #   curl -fsSL https://raw.githubusercontent.com/tura-learn/chamber/main/create.sh | sh
 #
@@ -22,8 +22,9 @@ command -v node >/dev/null 2>&1 || fail "needs Node.js 22.4 or newer: https://no
 node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 4) ? 0 : 1)' \
   || fail "needs Node.js 22.4 or newer (you have $(node -v))"
 command -v npm >/dev/null 2>&1 || fail "needs npm (it comes with Node.js)"
-TTY=/dev/tty
-[ -r "$TTY" ] || TTY=/dev/null
+# Wrangler may need to ask you something (e.g. a workers.dev subdomain on a new account): use the
+# terminal when there is one, even though this script's own input is the download.
+if (: < /dev/tty) 2>/dev/null; then TTY=/dev/tty; else TTY=/dev/null; fi
 
 # ----- 1. chamber's source, and wrangler (Cloudflare's tool) ------------------------
 say "1/5  Getting chamber"
@@ -92,7 +93,8 @@ done
 curl -fsSL "$RELAY/install" | sh -s -- "$SECRET" $NAME
 
 say "Done."
-echo "Send each teammate this one command, privately (it holds your chamber's key):"
+echo "You are this chamber's admin. Send each teammate this one command, privately (it holds"
+echo "your chamber's key); later, get it again with: chamber invite"
 echo
 echo "  curl -fsSL $RELAY/install | sh -s -- $SECRET"
 echo

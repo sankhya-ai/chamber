@@ -37,6 +37,7 @@ export interface Workspace {
 export interface BoardData {
   configured: boolean;
   me: string;
+  admin: boolean; // made this chamber, invites the team
   connected: boolean;
   problem: string;
   agents: { agent: string; kind: string; label: string; answers: boolean }[];

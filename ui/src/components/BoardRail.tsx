@@ -6,6 +6,7 @@ import type { Workspace } from "../lib/board.ts";
 
 interface Props {
   me: string;
+  admin: boolean;
   workspaces: Workspace[];
   active: string | null;
   theme: "dark" | "light";
@@ -15,7 +16,7 @@ interface Props {
 }
 
 /** The sidebar: your workspaces (to filter the board), add one, invite a teammate. */
-export function BoardRail({ me, workspaces, active, theme, onPick, onChanged, onTheme }: Props) {
+export function BoardRail({ me, admin, workspaces, active, theme, onPick, onChanged, onTheme }: Props) {
   const [naming, setNaming] = useState<string | null>(null);
 
   const rename = async () => {
@@ -115,10 +116,12 @@ export function BoardRail({ me, workspaces, active, theme, onPick, onChanged, on
       {note ? <p className="boardNote" onClick={() => setNote("")}>{note}</p> : null}
 
       <div className="boardRailFoot">
-        <button className="boardFootBtn" onClick={() => void invite()}>
-          {copied ? <Check size={14} /> : <Copy size={14} />}
-          {copied ? "Copied" : "Invite teammate"}
-        </button>
+        {admin ? (
+          <button className="boardFootBtn" onClick={() => void invite()}>
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+            {copied ? "Copied" : "Invite teammate"}
+          </button>
+        ) : null}
         <div className="boardFootRow">
           {naming === null ? (
             <button className="boardName" title="Your name in the chamber: teammates reach you as @name. Click to change." onClick={() => setNaming(me)}>

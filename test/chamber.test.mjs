@@ -234,15 +234,15 @@ test("one command: the relay serves the installer, which installs, joins and set
   const hooks = JSON.parse(readFileSync(join(project, ".claude", "settings.local.json"), "utf8")).hooks;
   assert.match(hooks.Stop[0].hooks[0].command, new RegExp(`${lineHome}/app/bin/chamber.mjs`));
 
-  // The installed command works on its own.
+  // The installed command works on its own; a teammate does not invite (the admin does).
   const status = await new Promise((done) => {
     const child = spawn(join(bin, "chamber"), ["invite"], { env: { ...process.env, HOME: home, CHAMBER_HOME: lineHome } });
     let out = "";
-    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (out += d));
     child.on("close", (code) => done({ code, out }));
   });
-  assert.equal(status.code, 0);
-  assert.match(status.out, new RegExp(`curl -fsSL ${relay}/install \\| sh -s -- ${invite.secret}`));
+  assert.equal(status.code, 1);
+  assert.match(status.out, /only your chamber's admin invites people/);
 });
 
 test("board: messages become conversations that say where they stand", async () => {
@@ -270,6 +270,7 @@ test("chamber board: see a talk, answer it, close it, start one; only from this 
   const invite = Invite.create(relay);
   const home = tmp("board");
   await run(["join", String(invite), "--as", "ashish"], { home });
+  writeFileSync(join(home, "relay.json"), JSON.stringify({ relay: invite.relay, secret: invite.secret })); // the admin's machine
   const port = await freePort();
   const board = spawn(process.execPath, [BIN, "board", "--no-open", "--port", String(port)], { env: { ...process.env, CHAMBER_HOME: home } });
   children.add(board);
@@ -392,4 +393,15 @@ test("a private relay serves only its own chambers", async () => {
   } finally {
     process.kill(-priv.pid, "SIGTERM");
   }
+});
+
+test("the admin makes the chamber and invites; teammates only join", async () => {
+  const admin = tmp("admin");
+  const made = await run(["new", "--relay", relay, "--as", "ashish"], { home: admin });
+  assert.match(made.stdout, /Send each teammate this one command/);
+  const command = (await run(["invite"], { home: admin })).stdout;
+  const secret = /sh -s -- (\S+)/.exec(command)[1];
+  const mate = tmp("mate");
+  await run(["join", `${relay}/#${secret}`, "--as", "nitin"], { home: mate });
+  assert.match((await run(["invite"], { home: mate })).stderr, /only your chamber's admin/);
 });

@@ -2,7 +2,7 @@
 // chamber — your coding agents and your teammates' agents, talking over a tiny relay.
 //
 //   chamber board                   open the board: every conversation your agents are in
-//   chamber invite                  the one command a teammate runs to join (copy it to them)
+//   chamber invite                  (admin) the one command a teammate runs to join
 //   chamber setup                   put the Claude Code of the project you are in in the chamber
 //   chamber status                  who is in the chamber
 //   chamber send <to> <text>        send from the terminal (--file path, --reply-to <id> to answer)
@@ -21,7 +21,7 @@ import { basename, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import { LineClient } from "../lib/client.mjs";
-import { Inbox, loadConfig, NOT_A_NAME, rename, saveConfig } from "../lib/inbox.mjs";
+import { Inbox, isAdmin, loadConfig, markAdmin, NOT_A_NAME, rename, saveConfig } from "../lib/inbox.mjs";
 import { Invite, LineError } from "../lib/protocol.mjs";
 
 const [command, ...rest] = process.argv.slice(2);
@@ -73,6 +73,7 @@ async function main() {
       const invite = Invite.create(opts.relay);
       const owner = (opts.as || defaultOwner()).toLowerCase();
       saveConfig(invite, owner);
+      markAdmin(invite);
       console.log(`New chamber on ${invite.relay}; you are on it as ${owner}.\n\nSend each teammate this one command, privately (it holds the chamber's key):\n\n  ${installCommand(invite)}\n\nThen, in each of your projects:  chamber setup`);
       return 0;
     }
@@ -94,6 +95,7 @@ async function main() {
       return 0;
     }
     case "invite": {
+      if (!isAdmin(needConfig())) throw new LineError("only your chamber's admin invites people: ask them for the join command");
       console.log(`Send this to a teammate, privately (it holds the chamber's key). They run it inside their project:\n\n  ${installCommand(needConfig().invite)}`);
       return 0;
     }

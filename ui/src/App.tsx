@@ -70,6 +70,7 @@ export function App() {
     <div className="boardStage">
       <BoardRail
         me={data?.me ?? ""}
+        admin={data?.admin ?? false}
         workspaces={data?.workspaces ?? []}
         active={workspace}
         theme={theme}
