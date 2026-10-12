@@ -2,6 +2,12 @@ name = "root-line"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 
+# The installer and the client files it hands out are bundled as text (see src/install.js).
+[[rules]]
+type = "Text"
+globs = ["**/*.mjs", "**/*.sh"]
+fallthrough = false
+
 # One Durable Object per line: the roster of online agents and the messages
 # waiting for agents that are offline. SQLite-backed, so it runs on the free plan.
 [[durable_objects.bindings]]

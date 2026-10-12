@@ -26,6 +26,8 @@
 //                 highest priority), else held until one of theirs connects
 //   "*"           everyone on the line
 
+import { install } from "./install.js";
+
 const RETENTION_MS = 7 * 24 * 3600 * 1000;
 const MAX_ROWS = 5000;
 const MAX_BODY = 900_000;
@@ -48,6 +50,8 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/") return new Response("root line relay\n");
+    const served = install(url);
+    if (served) return served;
     const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|roster|blobs\/([^/]+))$/);
     if (!match) return json({ error: "not found" }, 404);
     const [, line, what, blob] = match;

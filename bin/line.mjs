@@ -1,15 +1,18 @@
 #!/usr/bin/env node
-// line — your coding agents and your teammates' agents, talking over a tiny relay.
+// root-line — your coding agents and your teammates' agents, talking over a tiny relay.
 //
-//   line new --relay https://root-line.<you>.workers.dev   make a line; prints the invite
-//   line join '<invite>' --as nitin                          this machine joins it
-//   line setup [project] [--name n] [--no-wake]              put that project's Claude Code on it
-//   line remove [project]                                    take it off again
-//   line status                                              who is on the line
-//   line send <to> <text> [--file path]…                     send from the terminal
+//   root-line invite                  the one command a teammate runs to join (copy it to them)
+//   root-line setup                   put the Claude Code of the project you are in on the line
+//   root-line status                  who is on the line
+//   root-line send <to> <text>        send from the terminal (--file path to attach)
+//   root-line remove                  take this project's Claude Code off the line
+//
+//   root-line new --relay <url>       make a new line (once, after deploying the relay)
+//   root-line join <invite> [--as n]  join a line (the install command does this for you)
 //
 // Internal (called by Claude Code): `mcp`, `hook`, `wait` with --agent <name>.
 
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -35,35 +38,57 @@ const { values: opts, positionals } = parseArgs({
 
 function needConfig() {
   const config = loadConfig();
-  if (!config) throw new LineError("not on a line yet: `line join '<invite>' --as <name>`");
+  if (!config) throw new LineError("not on a line yet: run the install command your teammate sent you");
   return config;
+}
+
+/** Your name on the line: --as, else your git name, else your login. */
+function defaultOwner() {
+  let name = "";
+  try {
+    name = execFileSync("git", ["config", "--global", "user.name"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().split(/\s+/)[0];
+  } catch {}
+  return (name || process.env.USER || "me").toLowerCase().replace(/[^a-z0-9._-]+/g, "").replace(/^[^a-z0-9]+/, "").slice(0, 32) || "me";
+}
+
+function installCommand(invite) {
+  return `curl -fsSL ${invite.relay}/install | sh -s -- ${invite.secret}`;
 }
 
 async function main() {
   switch (command) {
     case "new": {
-      if (!opts.relay) throw new LineError("line new --relay https://<your relay>");
-      console.log(`${Invite.create(opts.relay)}\n\nShare it privately (it is the line's password). Each person runs:\n  line join '<invite>' --as <name>`);
+      if (!opts.relay) throw new LineError("root-line new --relay https://<your relay>");
+      const invite = Invite.create(opts.relay);
+      const owner = (opts.as || defaultOwner()).toLowerCase();
+      saveConfig(invite, owner);
+      console.log(`New line on ${invite.relay}; you are on it as ${owner}.\n\nSend each teammate this one command, privately (it holds the line's key):\n\n  ${installCommand(invite)}\n\nThen, in each of your projects:  root-line setup`);
       return 0;
     }
     case "join": {
-      if (!positionals[0] || !opts.as) throw new LineError("line join '<invite>' --as <name>");
-      const path = saveConfig(Invite.parse(positionals[0]), opts.as.toLowerCase());
-      console.log(`On the line as ${opts.as.toLowerCase()} (${path}).\nNow, in each project whose Claude Code should be on it:  line setup`);
+      if (!positionals[0]) throw new LineError("root-line join <invite> [--as <name>]");
+      const owner = (opts.as || defaultOwner()).toLowerCase();
+      saveConfig(Invite.parse(positionals[0]), owner);
+      console.log(`You are on the line as ${owner}${opts.as ? "" : " (change it with --as <name>)"}.`);
+      return 0;
+    }
+    case "invite": {
+      console.log(`Send this to a teammate, privately (it holds the line's key). They run it inside their project:\n\n  ${installCommand(needConfig().invite)}`);
       return 0;
     }
     case "setup": {
       const config = needConfig();
       const { setup } = await import("../lib/setup.mjs");
-      const result = setup(positionals[0] || ".", { name: opts.name, wake: !opts["no-wake"], register: !opts["no-register"] });
-      console.log(`${basename(resolve(positionals[0] || "."))}: Claude Code joins as ${config.owner}/${result.name}.`);
-      console.log(`  hooks: ${result.settings}`);
-      console.log(result.registered ? "  MCP server registered (local scope). Restart Claude Code in this project." : `  Register the MCP server yourself:\n    ${result.manual}`);
+      const register = !opts["no-register"] && !process.env.ROOT_LINE_NO_REGISTER;
+      const result = setup(positionals[0] || ".", { name: opts.name, wake: !opts["no-wake"], register });
+      console.log(`${basename(resolve(positionals[0] || "."))}: its Claude Code is on the line as ${config.owner}/${result.name}.`);
+      if (result.registered || !register) console.log("Restart Claude Code in this project to connect.");
+      else console.log(`Could not run the claude command; register the MCP server yourself, then restart Claude Code:\n  ${result.manual}`);
       return 0;
     }
     case "remove": {
       const { teardown } = await import("../lib/setup.mjs");
-      teardown(positionals[0] || ".", { register: !opts["no-register"] });
+      teardown(positionals[0] || ".", { register: !opts["no-register"] && !process.env.ROOT_LINE_NO_REGISTER });
       console.log("Removed the line from this project's Claude Code.");
       return 0;
     }
@@ -79,7 +104,7 @@ async function main() {
     case "send": {
       const { invite, owner } = needConfig();
       const [to, ...words] = positionals;
-      if (!to || !words.length) throw new LineError("line send <to> <text> [--file path]");
+      if (!to || !words.length) throw new LineError("root-line send <to> <text> [--file path]");
       const client = new LineClient(invite, `${owner}/terminal`, { kind: "terminal" });
       client.run();
       const files = (opts.file || []).map((path) => ({ name: basename(path), data: new Uint8Array(readFileSync(path)) }));
@@ -101,7 +126,7 @@ async function main() {
       return wait(opts.agent || "claude-code");
     }
     default:
-      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 12).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 13).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
       return command ? 1 : 0;
   }
 }
@@ -110,7 +135,7 @@ async function main() {
 main().then(
   (code) => (process.exitCode = code),
   (error) => {
-    process.stderr.write(`line: ${error instanceof LineError ? error.message : error.stack}\n`);
+    process.stderr.write(`root-line: ${error instanceof LineError ? error.message : error.stack}\n`);
     process.exit(1);
   },
 );

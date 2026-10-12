@@ -31,38 +31,38 @@ the files it needs, without anyone copying text between chats.
 
 ## Set up
 
-### 1. Deploy the relay (one person, once)
+**Joining a line: one command.** Whoever made the line runs `root-line invite`, and
+sends you what it prints. Run it inside your project:
 
 ```bash
-cd relay
-npm install
-npx wrangler login
+curl -fsSL https://<relay>/install | sh -s -- <secret>
+```
+
+Then restart Claude Code and approve the `root-line` server. That's it. The command:
+1. installs the `root-line` command (the client comes from the relay itself, so you
+   need only Node 22.4+, not access to this repository);
+2. joins the line under your git first name (add a name after the secret to choose);
+3. puts the project you are in on the line.
+
+**More projects:** run `root-line setup` inside each one. **Leaving:** `root-line remove`.
+
+Setup writes only per-machine settings, so nothing is committed to your project. The
+MCP server is registered with `claude mcp add -s local`, and the hooks go into
+`.claude/settings.local.json`, which is kept out of git.
+
+**Making a line (once, for the whole team):**
+
+```bash
+cd relay && npm install && npx wrangler login
 npx wrangler r2 bucket create root-line-blobs   # optional: big files. Skip it and delete
                                                # the [[r2_buckets]] block in wrangler.toml
 npx wrangler deploy                            # prints https://root-line.<you>.workers.dev
+cd .. && node bin/line.mjs new --relay https://root-line.<you>.workers.dev
 ```
 
-Then make the line and share its invite **privately**. It is the line's password:
-
-```bash
-node bin/line.mjs new --relay https://root-line.<you>.workers.dev
-```
-
-### 2. Each person: join, then set up your projects
-
-```bash
-git clone <this repo> ~/root-line
-alias line="node ~/root-line/bin/line.mjs"     # put it in your shell profile
-
-line join '<invite>' --as nitin
-cd ~/code/api && line setup                    # in every project whose Claude Code should be on the line
-```
-
-Restart Claude Code in that project and approve the `root-line` MCP server. That's
-all. `setup` writes only per-machine settings: the MCP server is registered with
-`claude mcp add -s local`, and the hooks go into `.claude/settings.local.json`,
-which is kept out of git. Nothing is committed to the project. `line remove`
-undoes it.
+`new` joins you to the line and prints the command to send teammates. The command
+holds the line's key, so send it privately. Redeploying the relay also updates the
+client it installs.
 
 ## Use it
 
@@ -79,7 +79,7 @@ Claude uses its tools:
 | `line_reply` | Answer a message by its id, with files |
 | `line_inbox` | Messages not yet seen (they normally appear on their own), or `recent: true` to see them again |
 
-From a terminal: `line status` shows who is on the line, and `line send @nitin "text" --file x` sends.
+From a terminal: `root-line status` shows who is on the line, and `root-line send @nitin "text" --file x` sends.
 
 **root (optional).** If you run root, it joins the same line as
 `<you>/root` and answers questions about your repository in a read-only session,
@@ -98,7 +98,7 @@ with `tura-code line answer ~/code/api` and restart root. With root up,
   anything that changes code or state. Claude Code's own permissions still apply
   to everything it does. root answers in plan mode, where editing tools are
   removed.
-- **Waking Claude is on by default.** Use `line setup --no-wake` for a project where
+- **Waking Claude is on by default.** Use `root-line setup --no-wake` for a project where
   you would rather see messages only while Claude is working.
 
 ## Limits
@@ -120,6 +120,7 @@ npm test        # starts the relay locally (wrangler dev) and runs everything ag
 | Path | What it is |
 | :- | :- |
 | `relay/src/index.js` | The Worker and the line's Durable Object |
+| `relay/src/install.*` | The one-command installer the relay serves |
 | `lib/protocol.mjs` | Invite, keys, sealing. Byte-compatible with root's Python client (`server/tura_code/line/`) |
 | `lib/client.mjs` | One agent's connection |
 | `lib/inbox.mjs` | Local config and per-agent inbox |

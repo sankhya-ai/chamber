@@ -201,3 +201,45 @@ test("setup adds the hooks next to the project's own, idempotently, and remove t
   await run(["remove", project, "--no-register"], { home });
   assert.deepEqual(JSON.parse(readFileSync(join(project, ".claude", "settings.local.json"), "utf8")), own);
 });
+
+test("one command: the relay serves the installer, which installs, joins and sets up the project", async () => {
+  const invite = Invite.create(relay);
+  const home = tmp("home");
+  const lineHome = join(home, ".root-line");
+  const bin = join(home, "bin");
+  const project = tmp("nitins-api");
+  await new Promise((done) => spawn("git", ["init", "-q"], { cwd: project }).on("close", done));
+
+  const script = await (await fetch(`${relay}/install`)).text();
+  assert.match(script, new RegExp(`RELAY="${relay}"`));
+  assert.equal(await (await fetch(`${relay}/client/lib/protocol.mjs`)).text(), readFileSync(join(ROOT, "lib", "protocol.mjs"), "utf8"));
+  assert.equal((await fetch(`${relay}/client/../../etc/passwd`)).status, 404);
+
+  const result = await new Promise((done) => {
+    const child = spawn("sh", ["-c", `curl -fsSL ${relay}/install | sh -s -- ${invite.secret} nitin`], {
+      cwd: project,
+      env: { ...process.env, HOME: home, ROOT_LINE_HOME: lineHome, ROOT_LINE_BIN: bin, ROOT_LINE_NO_REGISTER: "1" },
+    });
+    children.add(child);
+    let out = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (out += d));
+    child.on("close", (code) => done({ code, out }));
+  });
+  assert.equal(result.code, 0, result.out);
+  assert.match(result.out, /on the line as nitin/);
+  assert.match(result.out, /its Claude Code is on the line as nitin\/claude-code\.root-line-nitins-api/);
+  assert.equal(JSON.parse(readFileSync(join(lineHome, "config.json"), "utf8")).invite, String(invite));
+  const hooks = JSON.parse(readFileSync(join(project, ".claude", "settings.local.json"), "utf8")).hooks;
+  assert.match(hooks.Stop[0].hooks[0].command, new RegExp(`${lineHome}/app/bin/line.mjs`));
+
+  // The installed command works on its own.
+  const status = await new Promise((done) => {
+    const child = spawn(join(bin, "root-line"), ["invite"], { env: { ...process.env, HOME: home, ROOT_LINE_HOME: lineHome } });
+    let out = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.on("close", (code) => done({ code, out }));
+  });
+  assert.equal(status.code, 0);
+  assert.match(status.out, new RegExp(`curl -fsSL ${relay}/install \\| sh -s -- ${invite.secret}`));
+});
