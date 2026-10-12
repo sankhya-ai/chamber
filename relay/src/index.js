@@ -175,7 +175,12 @@ export class Line {
     const agent = String(frame.agent || "").toLowerCase();
     if (!AGENT.test(agent)) return this.send(ws, JSON.stringify({ t: "error", error: "agent must be owner/name" }));
     for (const { ws: other, who } of this.members()) {
-      if (who.agent === agent && other !== ws) other.close(4001, "replaced by a newer connection");
+      if (who.agent === agent && other !== ws) {
+        other.serializeAttachment(null); // off the roster now, even if the old side never answers the close
+        try {
+          other.close(4001, "replaced by a newer connection");
+        } catch {}
+      }
     }
     const who = {
       agent,
