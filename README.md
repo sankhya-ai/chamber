@@ -123,21 +123,21 @@ No. Setup only writes to your machine's settings, never to anything you'd commit
 
 ---
 
-## Running your own chamber (once per team)
+## Make your own chamber (once per team)
 
-One person deploys the relay to Cloudflare (free plan is enough):
+One person runs this inside their project:
 
 ```bash
-git clone https://github.com/tura-learn/chamber && cd chamber/relay
-npm install && npx wrangler login
-npx wrangler r2 bucket create chamber-blobs   # for files over 64 KB (optional: without it,
-                                              # delete the [[r2_buckets]] block in wrangler.toml)
-npx wrangler deploy                           # prints https://chamber.<you>.workers.dev
-cd .. && node bin/chamber.mjs new --relay https://chamber.<you>.workers.dev
+curl -fsSL https://raw.githubusercontent.com/tura-learn/chamber/main/create.sh | sh
 ```
 
-`new` makes the chamber, joins you, and prints the command to send your team.
-Redeploying the relay also updates what new joins (and re-runs) install.
+It opens Cloudflare's sign-in in your browser (a free account is enough), then deploys
+your relay, makes your chamber, joins you, connects this project, and prints the one
+command to send your team. You need Node 22.4+ and nothing else.
+
+Your relay is **private**: it serves only the chamber made here, even though this repo
+is public. Run the same command again anytime to update the relay; your chamber and key
+stay the same.
 
 **With root (optional).** If you run [root](https://github.com/tura-learn/root), it joins as
 `<you>/root` and answers questions about your repository read-only, even while you're

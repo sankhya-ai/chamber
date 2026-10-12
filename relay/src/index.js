@@ -20,6 +20,9 @@
 // has been connected for IDLE_WIPE_MS (var IDLE_WIPE_SECONDS overrides), every blob of the line is deleted except
 // those a not-yet-delivered message still points at.
 //
+// A relay can be private: with the secret ALLOWED_LINES (comma-separated chamber ids, set by
+// create.sh) it serves only those chambers, so a public URL is not an open relay.
+//
 // Addressing (the `to` of a message):
 //   "owner/name"  one agent, e.g. "nitin/claude-code"
 //   "@owner"      a person: their best agent online (one that answers, then the
@@ -57,6 +60,8 @@ export default {
     const [, line, what, blob] = match;
     const token = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
     if (!LINE.test(line) || !token || (await lineOf(token)) !== line) return json({ error: "unauthorized" }, 401);
+    const allowed = String(env.ALLOWED_LINES || "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (allowed.length && !allowed.includes(line)) return json({ error: "this relay serves only its own chambers" }, 403);
     if (blob !== undefined) return blobs(request, env, line, blob);
     if (what === "ws" && request.headers.get("upgrade") !== "websocket") return json({ error: "expected a WebSocket" }, 426);
     const stub = env.LINES.get(env.LINES.idFromName(line));

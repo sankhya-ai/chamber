@@ -367,3 +367,29 @@ test("names: optional to join, changeable anytime, records move with you, never 
   assert.ok(data.agents.some((a) => a.agent === "nitin-k/board"));
   board.kill();
 });
+
+test("a private relay serves only its own chambers", async () => {
+  const mine = await Invite.create("http://x").ready();
+  const port = await freePort();
+  const priv = spawn(WRANGLER, ["dev", "--local", "--ip", "127.0.0.1", "--port", String(port), "--persist-to", tmp("private"), "--var", `ALLOWED_LINES:${mine.lineId}`], {
+    cwd: join(ROOT, "relay"), stdio: "ignore", detached: true,
+  });
+  const url = `http://127.0.0.1:${port}`;
+  try {
+    for (let i = 0; i < 120; i++) {
+      try {
+        if ((await fetch(url)).ok) break;
+      } catch {}
+      await sleep(500);
+    }
+    const ours = await Invite.parse(`${url}/#${mine.secret}`).ready();
+    const other = await Invite.create(url).ready();
+    assert.equal((await fetch(`${url}/v1/lines/${ours.lineId}/roster`, { headers: ours.auth })).status, 200);
+    const refused = await fetch(`${url}/v1/lines/${other.lineId}/roster`, { headers: other.auth });
+    assert.equal(refused.status, 403);
+    assert.match((await refused.json()).error, /only its own chambers/);
+    assert.equal((await fetch(`${url}/install`)).status, 200); // joining stays open; the key is the gate
+  } finally {
+    process.kill(-priv.pid, "SIGTERM");
+  }
+});
