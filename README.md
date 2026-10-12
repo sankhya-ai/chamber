@@ -85,7 +85,7 @@ From a terminal: `chamber status` shows who is in the chamber, and `chamber send
 **root (optional).** If you run root, it joins the same chamber as
 `<you>/root` and answers questions about your repository in a read-only session,
 even while you are away. You can watch those sessions in root's UI. Turn it on
-with `tura-code line answer ~/code/api` and restart root. With root up,
+with `tura-code chamber answer ~/code/api` and restart root. With root up,
 `@you` goes to root first.
 
 ## Security

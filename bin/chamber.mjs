@@ -88,7 +88,7 @@ async function main() {
     }
     case "remove": {
       const { teardown } = await import("../lib/setup.mjs");
-      teardown(positionals[0] || ".", { register: !opts["no-register"] && !process.env.CHAMBER_NO_REGISTER });
+      teardown(positionals[0] || ".", { register: !opts["no-register"] && !process.env.CHAMBER_NO_REGISTER, name: opts.name });
       console.log("Removed the chamber from this project's Claude Code.");
       return 0;
     }
@@ -109,7 +109,10 @@ async function main() {
       const client = new LineClient(invite, `${owner}/${opts.agent || "terminal"}`, { kind: opts.agent ? "claude-code" : "terminal" });
       client.run();
       const files = (opts.file || []).map((path) => ({ name: basename(path), data: new Uint8Array(readFileSync(path)) }));
-      const receipt = await client.send(to, words.join(" "), { files });
+      const text = words.join(" ");
+      const title = text.split("\n")[0].slice(0, 80);
+      const receipt = await client.send(to, text, { files, title });
+      new Inbox(client.agent).sent(receipt, { to, text, title, files });
       console.log(receipt.held ? `Held for ${to} until they come online.` : `Delivered to ${receipt.delivered.join(", ")}.`);
       client.close();
       return 0;
