@@ -4,7 +4,8 @@
 //   chamber invite                  the one command a teammate runs to join (copy it to them)
 //   chamber setup                   put the Claude Code of the project you are in in the chamber
 //   chamber status                  who is in the chamber
-//   chamber send <to> <text>        send from the terminal (--file path to attach)
+//   chamber send <to> <text>        send from the terminal (--file path, --reply-to <id> to answer)
+//   chamber listen                  wait for the next message to you and print it (--timeout seconds)
 //   chamber remove                  take this project's Claude Code out of the chamber
 //
 //   chamber new --relay <url>       make a new chamber (once, after deploying the relay)
@@ -33,6 +34,8 @@ const { values: opts, positionals } = parseArgs({
     file: { type: "string", multiple: true },
     "no-wake": { type: "boolean" },
     "no-register": { type: "boolean" },
+    "reply-to": { type: "string" },
+    timeout: { type: "string" },
   },
 });
 
@@ -110,11 +113,39 @@ async function main() {
       client.run();
       const files = (opts.file || []).map((path) => ({ name: basename(path), data: new Uint8Array(readFileSync(path)) }));
       const text = words.join(" ");
-      const title = text.split("\n")[0].slice(0, 80);
-      const receipt = await client.send(to, text, { files, title });
-      new Inbox(client.agent).sent(receipt, { to, text, title, files });
+      const inbox = new Inbox(client.agent);
+      const original = opts["reply-to"] ? inbox.find(opts["reply-to"]) : null;
+      if (opts["reply-to"] && !original) throw new LineError(`no message ${opts["reply-to"]} in this agent's inbox`);
+      const title = original ? original.title : text.split("\n")[0].slice(0, 80);
+      const thread = original ? original.thread || original.id : null;
+      const receipt = await client.send(to, text, { files, title, thread, replyTo: original?.id ?? null });
+      inbox.sent(receipt, { to, text, title, files, replyTo: original?.id ?? null });
       console.log(receipt.held ? `Held for ${to} until they come online.` : `Delivered to ${receipt.delivered.join(", ")}.`);
       client.close();
+      return 0;
+    }
+    case "listen": {
+      // For an agent driven from a terminal: connect, print the next message to it (JSON), leave.
+      // What arrived while it was away comes first (the relay held it).
+      const { invite, owner } = needConfig();
+      const agent = `${owner}/${opts.agent || "terminal"}`;
+      const inbox = new Inbox(agent);
+      const fresh = inbox.claim();
+      if (!fresh.length) {
+        const arrived = new Promise((resolve) => {
+          const client = new LineClient(invite, agent, { kind: opts.agent ? "claude-code" : "terminal", answers: true, cursorPath: inbox.cursorPath, onMessage: (m) => resolve([client, inbox.add(m)]) });
+          client.run();
+          setTimeout(() => resolve([client, null]), Number(opts.timeout || 120) * 1000);
+        });
+        const [client, record] = await arrived;
+        client.close();
+        if (record) fresh.push(...inbox.claim());
+      }
+      if (!fresh.length) {
+        console.log("{}");
+        return 1;
+      }
+      for (const record of fresh) console.log(JSON.stringify(record));
       return 0;
     }
     case "mcp": {
