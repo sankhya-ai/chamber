@@ -1,0 +1,496 @@
+/* The board: sidebar, three columns of talks, and one talk open on the right.
+ * Same identity as the rest of root: glass cards on the ruled ground, hairlines,
+ * outlined or ink pills, orange only as the "waiting on you" signal. */
+
+html:has(.boardStage),
+html:has(.boardStage) body {
+  overflow: hidden; /* the board never scrolls as a page; its columns and talk scroll inside */
+}
+.boardStage {
+  display: grid;
+  gap: var(--gutter);
+  grid-template-columns: 232px minmax(0, 1fr);
+  height: 100%;
+  padding: var(--gutter);
+}
+
+.boardRail,
+.boardMain {
+  background: var(--glass-texture), var(--glass);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--card-shadow);
+  min-height: 0;
+}
+
+/* ----- sidebar ----- */
+
+.boardRail {
+  display: flex;
+  flex-direction: column;
+  padding: 18px 12px 12px;
+}
+.boardRailBrand {
+  padding: 0 8px 22px;
+}
+.boardRailLabel {
+  align-items: center;
+  color: var(--ink-faint);
+  display: flex;
+  font-size: 11px;
+  justify-content: space-between;
+  letter-spacing: 0.08em;
+  padding: 0 4px 6px 10px;
+  text-transform: uppercase;
+}
+.boardWorkspaces {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+.boardWorkspace {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: 14px;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 6px 0 10px;
+  text-align: left;
+}
+.boardWorkspace:hover {
+  background: var(--hover);
+}
+.boardWorkspace.active {
+  background: var(--selected);
+  color: var(--ink);
+}
+.boardWorkspaceName {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.boardWorkspace .ghost {
+  opacity: 0;
+}
+.boardWorkspace:hover .ghost {
+  opacity: 1;
+}
+.boardKind {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-faint);
+  font-size: 10px;
+  padding: 1px 6px;
+}
+.boardDot {
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  flex: none;
+  height: 7px;
+  width: 7px;
+}
+.boardDot.on {
+  background: #6fbf73;
+  border-color: #6fbf73;
+}
+.boardDot.all {
+  background: var(--ink-faint);
+  border-color: var(--ink-faint);
+}
+.boardAdd input {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  margin: 0 0 8px;
+  padding: 7px 10px;
+  width: 100%;
+}
+.boardNote {
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 12px;
+  margin: 8px 10px 0;
+}
+.boardRailFoot {
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+  padding: 12px 4px 0;
+}
+.boardFootRow {
+  display: flex;
+  gap: 4px;
+}
+.boardFootBtn,
+.boardPill {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--pill-line);
+  border-radius: 999px;
+  color: var(--ink-muted);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 13px;
+  gap: 6px;
+  justify-content: center;
+  padding: 6px 12px;
+}
+.boardFootBtn:hover,
+.boardPill:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.boardIconBtn {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--ink-faint);
+  cursor: pointer;
+  display: inline-flex;
+  height: 26px;
+  justify-content: center;
+  width: 26px;
+}
+.boardIconBtn:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* ----- board ----- */
+
+.boardMain {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: clip; /* not even scrollIntoView or focus() may scroll the frame */
+}
+.boardMain.withTalk {
+  grid-template-columns: minmax(0, 1fr) 420px;
+}
+.boardTop {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 12px;
+  grid-column: 1 / -1;
+  padding: 14px 18px;
+}
+.boardTop h1 {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+.boardOffline {
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+.boardInk {
+  align-items: center;
+  background: var(--ink-button);
+  border: 0;
+  border-radius: 999px;
+  color: var(--ink-button-text);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  gap: 6px;
+  margin-left: auto;
+  padding: 7px 14px;
+}
+.boardColumns {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  min-height: 0;
+  padding: 14px;
+}
+.boardColumn {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.boardColumn h3 {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+  padding: 12px 14px;
+}
+.boardColumn h3 span {
+  color: var(--ink-faint);
+  font-weight: 400;
+  margin-left: 4px;
+}
+.boardCards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+}
+.boardCard {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  gap: 10px;
+  padding: 12px;
+  position: relative;
+  text-align: left;
+}
+.boardCard:hover {
+  border-color: var(--line-strong);
+}
+.boardCard.open {
+  border-color: var(--ink-faint);
+}
+.boardColumn.waiting .boardCard::after {
+  background: var(--accent);
+  border-radius: 50%;
+  content: "";
+  height: 6px;
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  width: 6px;
+}
+.boardColumn.done .boardCard {
+  opacity: 0.6;
+}
+.boardCardTitle {
+  font-size: 14px;
+  line-height: 1.35;
+  padding-right: 12px;
+}
+.boardCardFoot {
+  color: var(--ink-faint);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  justify-content: space-between;
+}
+.boardCardFoot span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.boardEmpty {
+  margin: auto;
+  max-width: 360px;
+  padding: 40px;
+  text-align: center;
+}
+.boardEmpty h2 {
+  color: var(--ink);
+  font-size: 16px;
+}
+.boardEmpty p {
+  color: var(--ink-muted);
+  font-size: 14px;
+}
+
+/* ----- one talk ----- */
+
+.talkPanel {
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 0;
+}
+.talkHead {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px;
+}
+.talkHead h2 {
+  color: var(--ink);
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.talkMessages {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 16px 14px;
+}
+.talkMsg {
+  align-self: flex-start;
+  max-width: 88%;
+}
+.talkMsg.mine {
+  align-self: flex-end;
+}
+.talkMeta {
+  color: var(--ink-faint);
+  display: flex;
+  font-size: 11px;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.talkMsg.mine .talkMeta {
+  justify-content: flex-end;
+}
+.talkTime {
+  margin-left: 4px;
+}
+.talkText {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.45;
+  padding: 9px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.talkMsg.mine .talkText {
+  background: var(--user-bg);
+}
+.talkFile {
+  align-items: center;
+  color: var(--ink-muted);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 4px;
+  margin: 6px 8px 0 0;
+}
+.talkComposer {
+  border-top: 1px solid var(--line);
+  padding: 10px 12px 12px;
+}
+.talkTo {
+  align-items: center;
+  color: var(--ink-faint);
+  display: flex;
+  font-size: 12px;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.talkWho {
+  color: var(--ink-faint);
+}
+.talkTo input {
+  background: transparent;
+  border: 1px solid var(--pill-line);
+  border-radius: 999px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+  padding: 3px 10px;
+  width: 200px;
+}
+.talkInput {
+  align-items: flex-end;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  display: flex;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+}
+.talkInput textarea {
+  background: none;
+  border: 0;
+  color: var(--ink);
+  flex: 1;
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+  resize: none;
+}
+.talkSend {
+  align-items: center;
+  background: var(--send);
+  border: 0;
+  border-radius: 50%;
+  color: var(--ink);
+  cursor: pointer;
+  display: inline-flex;
+  flex: none;
+  height: 30px;
+  justify-content: center;
+  width: 30px;
+}
+.talkSend:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+@media (max-width: 900px) {
+  .boardStage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .boardRail {
+    display: none;
+  }
+  .boardColumns {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-y: auto;
+  }
+  .boardMain.withTalk {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .talkPanel {
+    grid-column: 1;
+  }
+  .boardMain.withTalk .boardColumns {
+    display: none;
+  }
+}
+
+/* ----- the wordmark ----- */
+
+.boardBrand {
+  align-items: baseline;
+  color: var(--ink);
+  display: inline-flex;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  gap: 3px;
+  letter-spacing: -0.02em;
+}
+.boardBrandDot {
+  background: var(--dot);
+  border-radius: 50%;
+  display: inline-block;
+  height: 7px;
+  width: 7px;
+}

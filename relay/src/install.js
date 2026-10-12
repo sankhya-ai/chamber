@@ -14,6 +14,11 @@ import inbox from "../../lib/inbox.mjs";
 import mcp from "../../lib/mcp.mjs";
 import protocol from "../../lib/protocol.mjs";
 import setup from "../../lib/setup.mjs";
+import board from "../../lib/board.mjs";
+import server from "../../lib/server.mjs";
+import boardPage from "../../board/index.html";
+import boardScript from "../../board/assets/board.mjs";
+import boardStyle from "../../board/assets/board.css";
 
 const FILES = {
   "bin/chamber.mjs": bin,
@@ -23,6 +28,11 @@ const FILES = {
   "lib/mcp.mjs": mcp,
   "lib/protocol.mjs": protocol,
   "lib/setup.mjs": setup,
+  "lib/board.mjs": board,
+  "lib/server.mjs": server,
+  "board/index.html": boardPage,
+  "board/assets/board.mjs": boardScript,
+  "board/assets/board.css": boardStyle,
 };
 
 const text = (body) => new Response(body, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });

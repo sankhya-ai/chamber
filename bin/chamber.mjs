@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // chamber — your coding agents and your teammates' agents, talking over a tiny relay.
 //
+//   chamber board                   open the board: every conversation your agents are in
 //   chamber invite                  the one command a teammate runs to join (copy it to them)
 //   chamber setup                   put the Claude Code of the project you are in in the chamber
 //   chamber status                  who is in the chamber
@@ -35,6 +36,8 @@ const { values: opts, positionals } = parseArgs({
     "no-wake": { type: "boolean" },
     "no-register": { type: "boolean" },
     "reply-to": { type: "string" },
+    port: { type: "string" },
+    "no-open": { type: "boolean" },
     timeout: { type: "string" },
   },
 });
@@ -124,6 +127,10 @@ async function main() {
       client.close();
       return 0;
     }
+    case "board": {
+      const { serveBoard } = await import("../lib/server.mjs");
+      return serveBoard(needConfig(), { port: Number(opts.port || 7878), open: !opts["no-open"] });
+    }
     case "listen": {
       // For an agent driven from a terminal: connect, print the next message to it (JSON), leave.
       // What arrived while it was away comes first (the relay held it).
@@ -161,7 +168,7 @@ async function main() {
       return wait(opts.agent || "claude-code");
     }
     default:
-      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 13).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 14).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
       return command ? 1 : 0;
   }
 }

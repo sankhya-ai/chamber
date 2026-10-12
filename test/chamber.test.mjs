@@ -230,6 +230,7 @@ test("one command: the relay serves the installer, which installs, joins and set
   assert.match(result.out, /in the chamber as nitin/);
   assert.match(result.out, /its Claude Code is in the chamber as nitin\/claude-code\.chamber-nitins-api/);
   assert.equal(JSON.parse(readFileSync(join(lineHome, "config.json"), "utf8")).invite, String(invite));
+  assert.ok(existsSync(join(lineHome, "app", "board", "assets", "board.mjs")), "the board comes with the install");
   const hooks = JSON.parse(readFileSync(join(project, ".claude", "settings.local.json"), "utf8")).hooks;
   assert.match(hooks.Stop[0].hooks[0].command, new RegExp(`${lineHome}/app/bin/chamber.mjs`));
 
@@ -242,4 +243,86 @@ test("one command: the relay serves the installer, which installs, joins and set
   });
   assert.equal(status.code, 0);
   assert.match(status.out, new RegExp(`curl -fsSL ${relay}/install \\| sh -s -- ${invite.secret}`));
+});
+
+test("board: messages become conversations that say where they stand", async () => {
+  const { threads } = await import("../lib/board.mjs");
+  const rec = (id, from, to, ts, extra = {}) => ({ id, from, to, ts, text: id, ...extra });
+  const records = [
+    rec("a1", "nitin/claude-code.api", "@ashish", 1, { title: "Heartbeat payload?", thread: "a1" }),
+    rec("a2", "ashish/claude-code.root", "nitin/claude-code.api", 2, { reply_to: "a1", thread: "a1" }),
+    rec("b1", "nitin/root", "ashish/board", 3, { text: "Review the lease fix?\nmore" }),
+    rec("b2", "ashish/board", "nitin/root", 4, { reply_to: "b1" }), // an older client: no thread
+    rec("b3", "nitin/root", "ashish/board", 5, { reply_to: "b2" }),
+    rec("c1", "ashish/claude-code.root", "@nitin", 6, { title: "Port?", thread: "c1" }),
+  ];
+  const cards = Object.fromEntries(threads(records, "ashish", new Set(["c1"])).map((c) => [c.id, c]));
+  assert.deepEqual(Object.keys(cards).sort(), ["a1", "b1", "c1"]);
+  assert.equal(cards.a1.status, "talking");
+  assert.equal(cards.b1.title, "Review the lease fix?");
+  assert.equal(cards.b1.status, "waiting");
+  assert.equal(cards.b1.count, 3);
+  assert.deepEqual(cards.b1.with, ["nitin/root"]);
+  assert.equal(cards.c1.status, "done");
+});
+
+test("chamber board: see a talk, answer it, close it, start one; only from this machine", async () => {
+  const invite = Invite.create(relay);
+  const home = tmp("board");
+  await run(["join", String(invite), "--as", "ashish"], { home });
+  const port = await freePort();
+  const board = spawn(process.execPath, [BIN, "board", "--no-open", "--port", String(port)], { env: { ...process.env, CHAMBER_HOME: home } });
+  children.add(board);
+  const url = `http://127.0.0.1:${port}`;
+  const get = async (path) => (await fetch(url + path)).json();
+  const post = (path, body, headers = {}) => fetch(url + path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+  let data;
+  for (let i = 0; i < 100; i++) {
+    try {
+      data = await get("/api/board");
+      if (data.connected) break;
+    } catch {}
+    await sleep(100);
+  }
+  assert.equal(data.connected, true);
+  assert.match(await (await fetch(url)).text(), /<div id="root">/);
+
+  await invite.ready();
+  const nitin = await join_(invite, "nitin/claude-code.web", { kind: "claude-code", answers: true });
+  const receipt = await nitin.send("@ashish", "Is expires_in an int?", { title: "Heartbeat payload" });
+  assert.deepEqual(receipt.delivered, ["ashish/board"]);
+  let card;
+  for (let i = 0; i < 50 && !card; i++) {
+    card = (await get("/api/board")).cards.find((c) => c.status === "waiting");
+    if (!card) await sleep(100);
+  }
+  assert.equal(card.title, "Heartbeat payload");
+
+  const got = new Promise((done) => (nitin.onMessage = done));
+  assert.equal((await post(`/api/board/talks/${card.id}`, { to: "nitin/claude-code.web", text: "Yes, epoch seconds." })).status, 200);
+  const answer = await got;
+  assert.equal(answer.text, "Yes, epoch seconds.");
+  assert.equal(answer.thread, card.id);
+  assert.deepEqual((await get(`/api/board/talks/${card.id}`)).messages.map((m) => m.from), ["nitin/claude-code.web", "ashish/board"]);
+  await post(`/api/board/talks/${card.id}/done`, { done: true });
+  assert.equal((await get("/api/board")).cards.find((c) => c.id === card.id).status, "done");
+
+  const fresh = new Promise((done) => (nitin.onMessage = done));
+  await post("/api/board/talks", { to: "@nitin", text: "Let's play?", title: "Welcome" });
+  assert.equal((await fresh).title, "Welcome");
+  assert.match((await get("/api/board/invite")).command, new RegExp(`/install \\| sh -s -- ${invite.secret}$`));
+
+  // Only this machine, only the board's own page.
+  const raw = (path, headers) => new Promise((done) => {
+    import("node:http").then(({ request }) => {
+      const req = request({ host: "127.0.0.1", port, path, method: "GET", headers }, (res) => done(res.statusCode));
+      req.end();
+    });
+  });
+  assert.equal(await raw("/api/board", { host: `evil.example:${port}` }), 403);
+  assert.equal((await post("/api/board/talks", { to: "@nitin", text: "x" }, { origin: "https://evil.example" })).status, 403);
+  assert.equal((await fetch(`${url}/api/board/talks`, { method: "POST", headers: { "content-type": "text/plain" }, body: "{}" })).status, 403);
+  assert.equal((await fetch(`${url}/api/board/files?path=${encodeURIComponent("/etc/passwd")}`)).status, 404);
+  nitin.close();
+  board.kill();
 });

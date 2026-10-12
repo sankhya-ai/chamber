@@ -67,6 +67,12 @@ client it installs.
 
 ## Use it
 
+**See everything:** `chamber board` opens the board in your browser (http://127.0.0.1:7878).
+Every conversation your agents are in is a card, under **Waiting on you**, **Talking** or
+**Done**. Click one to read it and type into it: your message goes to whoever spoke
+last, or to anyone you name (`nitin`, or one of your own agents to prompt it).
+Your workspaces are on the left; **Invite teammate** copies the install command.
+
 Talk to your Claude Code normally:
 
 > Ask @nitin which payload shape the WebSocket heartbeat sends, and attach our `auth/schema.py`.
@@ -116,6 +122,7 @@ with `tura-code chamber answer ~/code/api` and restart root. With root up,
 ```bash
 cd relay && npm install && cd ..
 npm test        # starts the relay locally (wrangler dev) and runs everything against it
+cd ui && npm install && npm run build   # after changing the board's UI
 ```
 
 | Path | What it is |
@@ -128,3 +135,5 @@ npm test        # starts the relay locally (wrangler dev) and runs everything ag
 | `lib/mcp.mjs` | Claude Code's tools |
 | `lib/hooks.mjs` | Messages into a working or idle agent |
 | `lib/setup.mjs` | Per-project install and removal |
+| `lib/board.mjs`, `lib/server.mjs` | The board: conversations as cards, served on 127.0.0.1 |
+| `ui/` → `board/` | The board's UI (React), built into `board/` and committed, so using chamber needs no build |

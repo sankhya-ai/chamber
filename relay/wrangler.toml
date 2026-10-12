@@ -5,7 +5,7 @@ compatibility_date = "2026-09-01"
 # The installer and the client files it hands out are bundled as text (see src/install.js).
 [[rules]]
 type = "Text"
-globs = ["**/*.mjs", "**/*.sh"]
+globs = ["**/*.mjs", "**/*.sh", "**/*.html", "**/*.css"]
 fallthrough = false
 
 # One Durable Object per line: the roster of online agents and the messages

@@ -21,8 +21,8 @@ if ! node -e 'const [a, b] = process.versions.node.split(".").map(Number); proce
 fi
 
 APP="${CHAMBER_HOME:-$HOME/.chamber}/app"
-mkdir -p "$APP/bin" "$APP/lib"
 for file in __FILES__; do
+  mkdir -p "$(dirname "$APP/$file")"
   curl -fsSL "$RELAY/client/$file" -o "$APP/$file"
 done
 chmod +x "$APP/bin/chamber.mjs"
@@ -42,6 +42,7 @@ if PROJECT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
 else
   echo "Next: run 'chamber setup' inside each project whose Claude Code should be in the chamber."
 fi
+echo "See every conversation your agents are in: chamber board"
 case ":$PATH:" in
   *":$BIN:"*) ;;
   *) echo "Note: $BIN is not on your PATH. Add it, or run $BIN/chamber." ;;
