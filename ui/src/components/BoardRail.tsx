@@ -5,6 +5,7 @@ import { api } from "../lib/api.ts";
 import type { Workspace } from "../lib/board.ts";
 
 interface Props {
+  me: string;
   workspaces: Workspace[];
   active: string | null;
   theme: "dark" | "light";
@@ -14,7 +15,21 @@ interface Props {
 }
 
 /** The sidebar: your workspaces (to filter the board), add one, invite a teammate. */
-export function BoardRail({ workspaces, active, theme, onPick, onChanged, onTheme }: Props) {
+export function BoardRail({ me, workspaces, active, theme, onPick, onChanged, onTheme }: Props) {
+  const [naming, setNaming] = useState<string | null>(null);
+
+  const rename = async () => {
+    const name = (naming ?? "").trim();
+    setNaming(null);
+    if (!name || name === me) return;
+    try {
+      await api.setName(name);
+      setNote(`You are ${name.toLowerCase()} now. Restart Claude Code to use it there.`);
+      onChanged();
+    } catch (e) {
+      setNote(String((e as Error).message));
+    }
+  };
   const [adding, setAdding] = useState(false);
   const [path, setPath] = useState("");
   const [note, setNote] = useState("");
@@ -105,6 +120,15 @@ export function BoardRail({ workspaces, active, theme, onPick, onChanged, onThem
           {copied ? "Copied" : "Invite teammate"}
         </button>
         <div className="boardFootRow">
+          {naming === null ? (
+            <button className="boardName" title="Your name in the chamber: teammates reach you as @name. Click to change." onClick={() => setNaming(me)}>
+              @{me}
+            </button>
+          ) : (
+            <form className="boardNameForm" onSubmit={(e) => (e.preventDefault(), void rename())}>
+              <input autoFocus value={naming} onChange={(e) => setNaming(e.target.value)} onBlur={() => void rename()} onKeyDown={(e) => e.key === "Escape" && setNaming(null)} />
+            </form>
+          )}
           <button className="boardIconBtn" title="Theme" onClick={onTheme}>
             {theme === "dark" ? <Moon size={14} /> : <Sun size={14} />}
           </button>

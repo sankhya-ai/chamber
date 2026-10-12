@@ -69,6 +69,7 @@ export function App() {
   return (
     <div className="boardStage">
       <BoardRail
+        me={data?.me ?? ""}
         workspaces={data?.workspaces ?? []}
         active={workspace}
         theme={theme}

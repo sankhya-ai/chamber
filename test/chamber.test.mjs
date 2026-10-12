@@ -326,3 +326,44 @@ test("chamber board: see a talk, answer it, close it, start one; only from this 
   nitin.close();
   board.kill();
 });
+
+test("names: optional to join, changeable anytime, records move with you, never an account name", async () => {
+  const invite = Invite.create(relay);
+  const home = tmp("names");
+  const joined = await run(["join", String(invite)], { home });
+  assert.match(joined.stdout, /You are in the chamber as [a-z0-9._-]+ \(change it anytime: chamber name <new>\)/);
+  const guessed = JSON.parse(readFileSync(join(home, "config.json"), "utf8")).owner;
+  assert.ok(!["root", "admin"].includes(guessed));
+
+  mkdirSync(join(home, "agents", `${guessed}__claude-code.api`), { recursive: true });
+  writeFileSync(join(home, "agents", `${guessed}__claude-code.api`, "sent.jsonl"), "{}\n");
+  assert.equal((await run(["name", "Nitin"], { home })).code, 0);
+  assert.equal((await run(["name"], { home })).stdout.trim(), "nitin");
+  assert.ok(existsSync(join(home, "agents", "nitin__claude-code.api", "sent.jsonl")), "your records move with your name");
+  const refused = await run(["name", "root"], { home });
+  assert.equal(refused.code, 1);
+  assert.match(refused.stderr, /account name/);
+
+  // The board renames too, and keeps working under the new name.
+  const port = await freePort();
+  const board = spawn(process.execPath, [BIN, "board", "--no-open", "--port", String(port)], { env: { ...process.env, CHAMBER_HOME: home } });
+  children.add(board);
+  const url = `http://127.0.0.1:${port}`;
+  for (let i = 0; i < 100; i++) {
+    try {
+      if ((await (await fetch(`${url}/api/board`)).json()).connected) break;
+    } catch {}
+    await sleep(100);
+  }
+  const renamed = await fetch(`${url}/api/board/name`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "nitin-k" }) });
+  assert.equal((await renamed.json()).name, "nitin-k");
+  let data;
+  for (let i = 0; i < 100; i++) {
+    data = await (await fetch(`${url}/api/board`)).json();
+    if (data.connected) break;
+    await sleep(100);
+  }
+  assert.equal(data.me, "nitin-k");
+  assert.ok(data.agents.some((a) => a.agent === "nitin-k/board"));
+  board.kill();
+});

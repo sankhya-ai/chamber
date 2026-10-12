@@ -494,3 +494,41 @@ html:has(.boardStage) body {
   height: 7px;
   width: 7px;
 }
+
+/* ----- your name ----- */
+
+.boardFootRow {
+  align-items: center;
+}
+.boardName {
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+  cursor: pointer;
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  overflow: hidden;
+  padding: 4px 6px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.boardName:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.boardNameForm {
+  flex: 1;
+}
+.boardNameForm input {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  padding: 3px 6px;
+  width: 100%;
+}

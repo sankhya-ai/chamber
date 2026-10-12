@@ -8,6 +8,7 @@
 //   chamber send <to> <text>        send from the terminal (--file path, --reply-to <id> to answer)
 //   chamber listen                  wait for the next message to you and print it (--timeout seconds)
 //   chamber remove                  take this project's Claude Code out of the chamber
+//   chamber name [new]              your name in the chamber (teammates reach you as @name)
 //
 //   chamber new --relay <url>       make a new chamber (once, after deploying the relay)
 //   chamber join <invite> [--as n]  join a chamber (the install command does this for you)
@@ -20,7 +21,7 @@ import { basename, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import { LineClient } from "../lib/client.mjs";
-import { Inbox, loadConfig, saveConfig } from "../lib/inbox.mjs";
+import { Inbox, loadConfig, NOT_A_NAME, rename, saveConfig } from "../lib/inbox.mjs";
 import { Invite, LineError } from "../lib/protocol.mjs";
 
 const [command, ...rest] = process.argv.slice(2);
@@ -48,13 +49,17 @@ function needConfig() {
   return config;
 }
 
-/** Your name in the chamber: --as, else your git name, else your login. */
+/** Your name in the chamber when you give none: your git first name, else your login, never an account name. */
 function defaultOwner() {
-  let name = "";
+  let git = "";
   try {
-    name = execFileSync("git", ["config", "--global", "user.name"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().split(/\s+/)[0];
+    git = execFileSync("git", ["config", "--global", "user.name"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().split(/\s+/)[0];
   } catch {}
-  return (name || process.env.USER || "me").toLowerCase().replace(/[^a-z0-9._-]+/g, "").replace(/^[^a-z0-9]+/, "").slice(0, 32) || "me";
+  for (const guess of [git, process.env.USER || ""]) {
+    const name = guess.toLowerCase().replace(/[^a-z0-9._-]+/g, "").replace(/^[^a-z0-9]+/, "").slice(0, 32);
+    if (name && !NOT_A_NAME.has(name)) return name;
+  }
+  return `member-${[...crypto.getRandomValues(new Uint8Array(2))].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
 function installCommand(invite) {
@@ -75,7 +80,17 @@ async function main() {
       if (!positionals[0]) throw new LineError("chamber join <invite> [--as <name>]");
       const owner = (opts.as || defaultOwner()).toLowerCase();
       saveConfig(Invite.parse(positionals[0]), owner);
-      console.log(`You are in the chamber as ${owner}${opts.as ? "" : " (change it with --as <name>)"}.`);
+      console.log(`You are in the chamber as ${owner}${opts.as ? "" : " (change it anytime: chamber name <new>)"}.`);
+      return 0;
+    }
+    case "name": {
+      if (!positionals[0]) {
+        console.log(needConfig().owner);
+        return 0;
+      }
+      const old = rename(positionals[0]);
+      const now = needConfig().owner;
+      console.log(old === now ? `Already ${now}.` : `You are now ${now} in the chamber (was ${old}). Restart Claude Code and the board to use it.`);
       return 0;
     }
     case "invite": {
@@ -168,7 +183,7 @@ async function main() {
       return wait(opts.agent || "claude-code");
     }
     default:
-      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 14).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 15).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
       return command ? 1 : 0;
   }
 }

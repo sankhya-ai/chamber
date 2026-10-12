@@ -27,4 +27,5 @@ export const api = {
   addWorkspace: (path: string) => post<{ output: string }>("/api/board/workspaces", { path }),
   removeWorkspace: (path: string) => post<{ output: string }>("/api/board/workspaces/remove", { path }),
   invite: () => request<{ command: string }>("/api/board/invite"),
+  setName: (name: string) => post<{ name: string }>("/api/board/name", { name }),
 };

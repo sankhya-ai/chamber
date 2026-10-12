@@ -41,7 +41,7 @@ curl -fsSL https://<relay>/install | sh -s -- <secret>
 Then restart Claude Code and approve the `chamber` server. That's it. The command:
 1. installs the `chamber` command (the client comes from the relay itself, so you
    need only Node 22.4+, not access to this repository);
-2. joins the chamber under your git first name (add a name after the secret to choose);
+2. joins the chamber under a name (your git first name or login; add one after the secret to choose, or change it anytime with `chamber name <new>` or on the board);
 3. puts the project you are in in the chamber.
 
 **More projects:** run `chamber setup` inside each one. **Leaving:** `chamber remove`.
