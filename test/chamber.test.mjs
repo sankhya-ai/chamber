@@ -456,3 +456,65 @@ test("channels: boards hear everything, Claude Code only @mentions; offline gets
   await ashBoard.send("#backend", "joined, reading now");
   for (const c of [ashBoard, back, nitBoard]) c.close();
 });
+
+test("personal invites: a pass per member, names are theirs, the admin revokes", async () => {
+  const { newAdminKey, issuePass, revocation } = await import("../lib/admin.mjs");
+  const admin = newAdminKey();
+  const port = await freePort();
+  const relayProc = spawn(WRANGLER, ["dev", "--local", "--ip", "127.0.0.1", "--port", String(port), "--persist-to", tmp("personal"), "--var", `ADMIN_KEY:${admin.public}`], {
+    cwd: join(ROOT, "relay"), stdio: "ignore", detached: true,
+  });
+  const url = `http://127.0.0.1:${port}`;
+  try {
+    for (let i = 0; i < 120; i++) {
+      try {
+        if ((await fetch(url)).ok) break;
+      } catch {}
+      await sleep(500);
+    }
+    const chamber = await Invite.create(url).ready();
+    const as = (pass) => new Invite(url, chamber.secret, pass);
+    const tryJoin = async (invite, agent) => {
+      const client = new LineClient(await invite.ready(), agent, { kind: "human", listens: true });
+      clients.add(client);
+      client.run();
+      for (let i = 0; i < 40 && !client.connected && !client.problem; i++) await sleep(100);
+      await sleep(200);
+      return client;
+    };
+
+    const nobody = await tryJoin(chamber, "eve/board");
+    assert.equal(nobody.connected, false);
+    assert.match(nobody.problem, /personal invite|refused/);
+    nobody.close();
+
+    const passA = issuePass(admin.private, chamber.lineId);
+    const passB = issuePass(admin.private, chamber.lineId);
+    const ashish = await tryJoin(as(passA), "ashish/board");
+    assert.equal(ashish.connected, true);
+    const imposter = await tryJoin(as(passB), "ashish/claude-code.x");
+    assert.equal(imposter.connected, false, "a name belongs to the member who has it");
+    imposter.close();
+    const nitin = await tryJoin(as(passB), "nitin/board");
+    assert.equal(nitin.connected, true);
+
+    const members = await (await fetch(`${url}/v1/lines/${chamber.lineId}/members`, { headers: chamber.auth })).json();
+    assert.equal(members.personal, true);
+    assert.deepEqual(members.members.map((m) => m.owner).sort(), ["ashish", "nitin"]);
+
+    const forged = await fetch(`${url}/v1/lines/${chamber.lineId}/admin`, { method: "POST", headers: { ...chamber.auth, "content-type": "application/json" }, body: JSON.stringify({ order: revocation(newAdminKey().private, chamber.lineId, "nitin") }) });
+    assert.equal(forged.status, 403, "only the admin's key can revoke");
+    const order = await fetch(`${url}/v1/lines/${chamber.lineId}/admin`, { method: "POST", headers: { ...chamber.auth, "content-type": "application/json" }, body: JSON.stringify({ order: revocation(admin.private, chamber.lineId, "nitin") }) });
+    assert.equal(order.status, 200);
+    await sleep(500);
+    assert.equal(nitin.connected, false, "revoked: disconnected now");
+    nitin.close();
+    const again = await tryJoin(as(passB), "nitin-2/board");
+    assert.equal(again.connected, false, "and their pass no longer works, under any name");
+    assert.match(again.problem, /removed/);
+    again.close();
+    ashish.close();
+  } finally {
+    process.kill(-relayProc.pid, "SIGTERM");
+  }
+});

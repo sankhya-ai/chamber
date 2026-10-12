@@ -20,6 +20,11 @@
 // has been connected for IDLE_WIPE_MS (var IDLE_WIPE_SECONDS overrides), every blob of the line is deleted except
 // those a not-yet-delivered message still points at.
 //
+// Personal invites: with the secret ADMIN_KEY (the admin's Ed25519 public key) every agent
+// must show a pass the admin signed for its member, a name belongs to the first member to
+// use it, and the admin can revoke a member (a signed order). Without ADMIN_KEY, anyone
+// with the chamber key may join (the original, open mode).
+//
 // A relay can be private: with the secret ALLOWED_LINES (comma-separated chamber ids, set by
 // create.sh) it serves only those chambers, so a public URL is not an open relay.
 //
@@ -57,7 +62,7 @@ export default {
     if (url.pathname === "/") return new Response("chamber relay\n");
     const served = install(url);
     if (served) return served;
-    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|roster|blobs\/([^/]+))$/);
+    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|roster|members|admin|blobs\/([^/]+))$/);
     if (!match) return json({ error: "not found" }, 404);
     const [, line, what, blob] = match;
     const token = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
@@ -72,6 +77,22 @@ export default {
     return stub.fetch(forwarded);
   },
 };
+
+const b64 = (text) => Uint8Array.from(atob(text.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+
+/** The claims of a token the admin signed (pass or order), or null. */
+async function signedByAdmin(env, token) {
+  if (!env.ADMIN_KEY || typeof token !== "string") return null;
+  const [body, sig] = token.split(".");
+  if (!body || !sig) return null;
+  try {
+    const key = await crypto.subtle.importKey("raw", b64(env.ADMIN_KEY), { name: "Ed25519" }, false, ["verify"]);
+    if (!(await crypto.subtle.verify({ name: "Ed25519" }, key, b64(sig), new TextEncoder().encode(body)))) return null;
+    return JSON.parse(new TextDecoder().decode(b64(body)));
+  } catch {
+    return null;
+  }
+}
 
 async function blobs(request, env, line, blob) {
   if (!env.BLOBS) return json({ error: "this relay has no file storage; send smaller files" }, 501);
@@ -113,6 +134,9 @@ export class Line {
     if (!columns.includes("mentions")) this.sql.exec("ALTER TABLE messages ADD COLUMN mentions TEXT NOT NULL DEFAULT ''");
     this.sql.exec("CREATE INDEX IF NOT EXISTS messages_to ON messages (to_agent, seq)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS channels (name TEXT NOT NULL, owner TEXT NOT NULL, PRIMARY KEY (name, owner))");
+    // Personal invites: which member holds a name, and members the admin removed.
+    this.sql.exec("CREATE TABLE IF NOT EXISTS names (owner TEXT PRIMARY KEY, member TEXT NOT NULL, since INTEGER NOT NULL)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS revoked (member TEXT PRIMARY KEY, at INTEGER NOT NULL)");
   }
 
   // ----- channels ---------------------------------------------------------------
@@ -161,6 +185,12 @@ export class Line {
       await this.ctx.storage.put("line", line); // the alarm may wake in a fresh instance
     }
     if (what === "roster") return json({ agents: this.roster() });
+    if (what === "members") {
+      const online = new Set(this.roster().map((w) => w.owner));
+      const rows = this.sql.exec("SELECT owner, member, since FROM names ORDER BY owner").toArray();
+      return json({ personal: Boolean(this.env.ADMIN_KEY), members: rows.map((r) => ({ ...r, online: online.has(r.owner) })) });
+    }
+    if (what === "admin") return this.admin(await request.json().catch(() => ({})));
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
     return new Response(null, { status: 101, webSocket: pair[0] });
@@ -201,6 +231,46 @@ export class Line {
     }
   }
 
+  // ----- the admin ----------------------------------------------------------------
+
+  /** A signed order from the admin: { order: <token> }. Today: revoke a member by name. */
+  async admin(body) {
+    const claims = await signedByAdmin(this.env, body.order);
+    const line = this.line || (await this.ctx.storage.get("line"));
+    if (!claims || claims.line !== line || claims.op !== "revoke" || !OWNER.test(String(claims.owner || ""))) return json({ error: "not a valid order from this chamber's admin" }, 403);
+    const row = this.sql.exec("SELECT member FROM names WHERE owner = ?", claims.owner).toArray()[0];
+    if (row) this.sql.exec("INSERT OR IGNORE INTO revoked (member, at) VALUES (?, ?)", row.member, Date.now());
+    this.sql.exec("DELETE FROM names WHERE owner = ?", claims.owner);
+    this.sql.exec("DELETE FROM channels WHERE owner = ?", claims.owner);
+    for (const { ws, who } of this.members()) {
+      if (who.owner === claims.owner) {
+        ws.serializeAttachment(null);
+        try {
+          ws.close(4003, "removed from the chamber by its admin");
+        } catch {}
+      }
+    }
+    this.broadcastRoster();
+    this.broadcastChannels();
+    return json({ ok: true, revoked: claims.owner });
+  }
+
+  /** May this hello use this name? With personal invites: a valid pass, not revoked, and the name is free or theirs. */
+  async admit(owner, pass) {
+    if (!this.env.ADMIN_KEY) return null;
+    const claims = await signedByAdmin(this.env, pass);
+    const line = this.line || (await this.ctx.storage.get("line"));
+    if (!claims || claims.line !== line || !claims.member) return "this chamber needs a personal invite: ask its admin for one";
+    if (this.sql.exec("SELECT 1 FROM revoked WHERE member = ?", claims.member).toArray().length) return "you were removed from this chamber by its admin";
+    const holder = this.sql.exec("SELECT member FROM names WHERE owner = ?", owner).toArray()[0];
+    if (holder && holder.member !== claims.member) return `the name ${owner} belongs to someone else in this chamber; pick another (chamber name <new>)`;
+    if (!holder) {
+      this.sql.exec("DELETE FROM names WHERE member = ?", claims.member); // a member holds one name: renaming frees the old one
+      this.sql.exec("INSERT INTO names (owner, member, since) VALUES (?, ?, ?)", owner, claims.member, Date.now());
+    }
+    return null;
+  }
+
   // ----- frames ---------------------------------------------------------------
 
   async webSocketMessage(ws, raw) {
@@ -211,7 +281,7 @@ export class Line {
       return this.send(ws, JSON.stringify({ t: "error", error: "frames are JSON" }));
     }
     const who = ws.deserializeAttachment();
-    if (frame.t === "hello") return this.hello(ws, frame);
+    if (frame.t === "hello") return await this.hello(ws, frame);
     if (!who || !who.agent) return this.send(ws, JSON.stringify({ t: "error", error: "say hello first" }));
     if (frame.t === "send") return this.deliver(ws, who, frame);
     if (frame.t === "channel") return this.channel(ws, who, frame);
@@ -219,9 +289,17 @@ export class Line {
     this.send(ws, JSON.stringify({ t: "error", error: `unknown frame ${frame.t}` }));
   }
 
-  hello(ws, frame) {
+  async hello(ws, frame) {
     const agent = String(frame.agent || "").toLowerCase();
     if (!AGENT.test(agent)) return this.send(ws, JSON.stringify({ t: "error", error: "agent must be owner/name" }));
+    const refused = await this.admit(agent.split("/")[0], frame.pass);
+    if (refused) {
+      this.send(ws, JSON.stringify({ t: "error", error: refused }));
+      try {
+        ws.close(4003, refused.slice(0, 120));
+      } catch {}
+      return;
+    }
     for (const { ws: other, who } of this.members()) {
       if (who.agent === agent && other !== ws) {
         other.serializeAttachment(null); // off the roster now, even if the old side never answers the close

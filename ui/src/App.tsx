@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { CommandMenu } from "@/components/CommandMenu";
 import { Composer } from "@/components/Composer";
 import { Conversation } from "@/components/Conversation";
-import { ChannelDialog, InviteDialog } from "@/components/Dialogs";
+import { ChannelDialog, InviteDialog, MembersDialog } from "@/components/Dialogs";
 import { Sidebar } from "@/components/Sidebar";
 import { TalkList } from "@/components/TalkList";
 import { Button } from "@/components/ui/button";
@@ -50,6 +50,7 @@ export function App() {
   const [menu, setMenu] = useState(false);
   const [channels, setChannels] = useState(false);
   const [invite, setInvite] = useState(false);
+  const [members, setMembers] = useState(false);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -131,6 +132,7 @@ export function App() {
           onSearch={() => setMenu(true)}
           onNewChannel={() => setChannels(true)}
           onInvite={() => setInvite(true)}
+          onMembers={() => setMembers(true)}
           onTheme={() => setDark((v) => !v)}
           onChanged={refresh}
         />
@@ -215,6 +217,7 @@ export function App() {
         }}
       />
       <InviteDialog open={invite} onOpenChange={setInvite} />
+      <MembersDialog open={members} onOpenChange={setMembers} admin={data?.admin ?? false} me={me} onChanged={refresh} />
     </TooltipProvider>
   );
 }

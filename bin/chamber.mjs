@@ -2,7 +2,9 @@
 // chamber — your coding agents and your teammates' agents, talking over a tiny relay.
 //
 //   chamber board                   open the board: every conversation your agents are in
-//   chamber invite                  (admin) the one command a teammate runs to join
+//   chamber invite                  (admin) a personal join command for one teammate
+//   chamber members                 who is in the chamber
+//   chamber revoke <name>           (admin) remove a teammate
 //   chamber setup                   put the Claude Code of the project you are in in the chamber
 //   chamber status                  who is in the chamber
 //   chamber send <to> <text>        send from the terminal (--file path, --reply-to <id> to answer)
@@ -96,7 +98,23 @@ async function main() {
     }
     case "invite": {
       if (!isAdmin(needConfig())) throw new LineError("only your chamber's admin invites people: ask them for the join command");
-      console.log(`Send this to a teammate, privately (it holds the chamber's key). They run it inside their project:\n\n  ${installCommand(needConfig().invite)}`);
+      const { inviteCommand } = await import("../lib/admin.mjs");
+      console.log(`Send this to one teammate, privately (it is their personal key to the chamber). They run it inside their project:\n\n  ${await inviteCommand(needConfig())}`);
+      return 0;
+    }
+    case "members": {
+      const { listMembers } = await import("../lib/admin.mjs");
+      const { personal, members } = await listMembers(needConfig());
+      if (!personal) console.log("This chamber has no personal invites: anyone with the key may join (create.sh adds them).");
+      for (const m of members) console.log(`  ${(m.online ? "●" : "○")} ${m.owner}`);
+      return 0;
+    }
+    case "revoke": {
+      if (!isAdmin(needConfig())) throw new LineError("only your chamber's admin removes people");
+      if (!positionals[0]) throw new LineError("chamber revoke <name>");
+      const { revoke } = await import("../lib/admin.mjs");
+      await revoke(needConfig(), positionals[0]);
+      console.log(`Removed ${positionals[0].toLowerCase()}: their invite no longer works.`);
       return 0;
     }
     case "setup": {
@@ -185,7 +203,7 @@ async function main() {
       return wait(opts.agent || "claude-code");
     }
     default:
-      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 15).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 17).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
       return command ? 1 : 0;
   }
 }

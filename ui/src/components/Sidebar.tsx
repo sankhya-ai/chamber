@@ -1,4 +1,4 @@
-import { Check, Hash, Inbox, Layers, Moon, Plus, Search, Sun, UserPlus, X } from "lucide-react";
+import { Check, Hash, Inbox, Layers, Moon, Plus, Search, Sun, UserPlus, Users, X } from "lucide-react";
 import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
@@ -15,6 +15,7 @@ interface Props {
   onSearch: () => void;
   onNewChannel: () => void;
   onInvite: () => void;
+  onMembers: () => void;
   onTheme: () => void;
   onChanged: () => void;
 }
@@ -63,7 +64,7 @@ function IconButton({ label, onClick, children }: { label: string; onClick: (e: 
 }
 
 /** Slack's sidebar: inbox, channels, people, your agents. */
-export function Sidebar({ data, view, dark, onView, onSearch, onNewChannel, onInvite, onTheme, onChanged }: Props) {
+export function Sidebar({ data, view, dark, onView, onSearch, onNewChannel, onInvite, onMembers, onTheme, onChanged }: Props) {
   const [adding, setAdding] = useState(false);
   const [folder, setFolder] = useState("");
   const [naming, setNaming] = useState<string | null>(null);
@@ -171,6 +172,7 @@ export function Sidebar({ data, view, dark, onView, onSearch, onNewChannel, onIn
           </form>
         )}
         {data?.admin ? <IconButton label="Invite a teammate" onClick={onInvite}><UserPlus className="size-4" /></IconButton> : null}
+        <IconButton label="Members" onClick={onMembers}><Users className="size-4" /></IconButton>
         <IconButton label={dark ? "Light mode" : "Dark mode"} onClick={onTheme}>{dark ? <Sun className="size-4" /> : <Moon className="size-4" />}</IconButton>
       </div>
     </aside>

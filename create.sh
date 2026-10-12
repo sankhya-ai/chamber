@@ -65,23 +65,32 @@ rm -f "$LOG"
 [ -n "$RELAY" ] || fail "the deploy did not print a workers.dev address (see above)"
 
 # Your chamber: keep the one you have on this relay, else make one. Only chambers listed
-# here may use the relay.
+# here may use the relay. Personal invites: your admin key signs each teammate's pass; the
+# relay gets only its public half. Re-running keeps the key, so invites stay valid.
 STATE="$HOME_DIR/relay.json"
 SECRET="$(node -e '
   const fs = require("fs");
   try { const s = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (s.relay === process.argv[2] && s.secret) { console.log(s.secret); process.exit(0); } } catch {}
-  try { const [relay, secret] = JSON.parse(fs.readFileSync(process.argv[3], "utf8")).invite.split("/#"); if (relay === process.argv[2] && secret) { console.log(secret); process.exit(0); } } catch {}
+  try { const [relay, key] = JSON.parse(fs.readFileSync(process.argv[3], "utf8")).invite.split("/#"); if (relay === process.argv[2] && key) { console.log(key.split("~")[0]); process.exit(0); } } catch {}
   console.log(require("crypto").randomBytes(32).toString("base64url"));
 ' "$STATE" "$RELAY" "$HOME_DIR/config.json")"
 LINE="$(node --input-type=module -e "
   const { Invite } = await import('$SRC/lib/protocol.mjs');
   console.log((await new Invite('$RELAY', '$SECRET').ready()).lineId);
 ")"
-node -e '
-  const fs = require("fs");
-  fs.writeFileSync(process.argv[1], JSON.stringify({ relay: process.argv[2], secret: process.argv[3], lines: [process.argv[4]] }), { mode: 0o600 });
-' "$STATE" "$RELAY" "$SECRET" "$LINE"
+ADMIN="$(CHAMBER_HOME="$HOME_DIR" node --input-type=module -e "
+  import { readFileSync, writeFileSync } from 'node:fs';
+  const { newAdminKey, issuePass } = await import('$SRC/lib/admin.mjs');
+  let s = {};
+  try { s = JSON.parse(readFileSync('$STATE', 'utf8')); } catch {}
+  const key = s.relay === '$RELAY' && s.adminPrivate ? { public: s.adminPublic, private: s.adminPrivate } : newAdminKey();
+  writeFileSync('$STATE', JSON.stringify({ relay: '$RELAY', secret: '$SECRET', lines: ['$LINE'], adminPublic: key.public, adminPrivate: key.private }), { mode: 0o600 });
+  console.log(key.public + ' ' + issuePass(key.private, '$LINE'));
+")"
+ADMIN_PUBLIC="${ADMIN%% *}"
+ADMIN_PASS="${ADMIN#* }"
 printf '%s' "$LINE" | wr secret put ALLOWED_LINES >/dev/null 2>&1 || fail "could not make the relay private (wrangler secret put)"
+printf '%s' "$ADMIN_PUBLIC" | wr secret put ADMIN_KEY >/dev/null 2>&1 || fail "could not set up personal invites (wrangler secret put ADMIN_KEY)"
 echo "Relay: $RELAY (private to your chamber)"
 
 # ----- 5. join, and put this project in -------------------------------------------------------
@@ -90,12 +99,13 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
   curl -fsS "$RELAY/install" -o /dev/null 2>/dev/null && break
   sleep 3
 done
-curl -fsSL "$RELAY/install" | sh -s -- "$SECRET" $NAME
+curl -fsSL "$RELAY/install" | sh -s -- "$SECRET~$ADMIN_PASS" $NAME
 
 say "Done."
-echo "You are this chamber's admin. Send each teammate this one command, privately (it holds"
-echo "your chamber's key); later, get it again with: chamber invite"
+echo "You are this chamber's admin. Invite each teammate with their own command (a personal key):"
 echo
-echo "  curl -fsSL $RELAY/install | sh -s -- $SECRET"
+echo "  chamber invite        (or Invite on the board)"
+echo
+echo "Remove someone anytime: chamber revoke <name>"
 echo
 echo "See every conversation: chamber board"
