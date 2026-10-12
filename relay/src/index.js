@@ -1,4 +1,4 @@
-// The root line relay.
+// The chamber relay.
 //
 // A line is a shared room where people's agents (root, Claude Code, …) meet.
 // The Worker is stateless: it checks the caller's token and hands the request to
@@ -49,7 +49,7 @@ function json(body, status = 200) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === "/") return new Response("root line relay\n");
+    if (url.pathname === "/") return new Response("chamber relay\n");
     const served = install(url);
     if (served) return served;
     const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|roster|blobs\/([^/]+))$/);

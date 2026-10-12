@@ -1,4 +1,4 @@
-// The one-command install: the relay serves the `root-line` client itself, so a
+// The one-command install: the relay serves the `chamber` client itself, so a
 // teammate needs neither the repository nor anything but Node:
 //
 //   curl -fsSL https://<relay>/install | sh -s -- <secret> [name]
@@ -7,7 +7,7 @@
 // (wrangler.toml [[rules]]), so redeploying the relay updates what it installs.
 
 import script from "./install.sh";
-import bin from "../../bin/line.mjs";
+import bin from "../../bin/chamber.mjs";
 import client from "../../lib/client.mjs";
 import hooks from "../../lib/hooks.mjs";
 import inbox from "../../lib/inbox.mjs";
@@ -16,7 +16,7 @@ import protocol from "../../lib/protocol.mjs";
 import setup from "../../lib/setup.mjs";
 
 const FILES = {
-  "bin/line.mjs": bin,
+  "bin/chamber.mjs": bin,
   "lib/client.mjs": client,
   "lib/hooks.mjs": hooks,
   "lib/inbox.mjs": inbox,

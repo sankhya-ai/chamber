@@ -15,10 +15,10 @@ import { LineClient } from "../lib/client.mjs";
 import { Invite, LineError } from "../lib/protocol.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const BIN = join(ROOT, "bin", "line.mjs");
+const BIN = join(ROOT, "bin", "chamber.mjs");
 const WRANGLER = join(ROOT, "relay", "node_modules", ".bin", "wrangler");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const tmp = (name) => mkdtempSync(join(tmpdir(), `root-line-${name}-`));
+const tmp = (name) => mkdtempSync(join(tmpdir(), `chamber-${name}-`));
 
 let relay;
 let relayProcess;
@@ -60,7 +60,7 @@ after(() => {
 
 function run(args, { home, input = "", cwd = ROOT } = {}) {
   return new Promise((done) => {
-    const child = spawn(process.execPath, [BIN, ...args], { cwd, env: { ...process.env, ROOT_LINE_HOME: home } });
+    const child = spawn(process.execPath, [BIN, ...args], { cwd, env: { ...process.env, CHAMBER_HOME: home } });
     children.add(child);
     let stdout = "";
     let stderr = "";
@@ -80,7 +80,7 @@ async function join_(invite, agent, options = {}) {
 }
 
 function mcp(home, agent, cwd) {
-  const child = spawn(process.execPath, [BIN, "mcp", "--agent", agent], { cwd, env: { ...process.env, ROOT_LINE_HOME: home } });
+  const child = spawn(process.execPath, [BIN, "mcp", "--agent", agent], { cwd, env: { ...process.env, CHAMBER_HOME: home } });
   children.add(child);
   const lines = createInterface({ input: child.stdout });
   const pending = new Map();
@@ -116,24 +116,24 @@ test("sealing: the relay can route but not read, alter or re-attribute", async (
 
 test("a project's Claude Code: asked, shown mid-task by the hook, woken when idle, replies with files", async () => {
   const invite = Invite.create(relay);
-  const home = tmp("chitranjan");
+  const home = tmp("ashish");
   const project = tmp("project");
   writeFileSync(join(project, "schema.py"), "class Token:\n    expires_in: int\n");
-  assert.equal((await run(["join", String(invite), "--as", "chitranjan"], { home })).code, 0);
+  assert.equal((await run(["join", String(invite), "--as", "ashish"], { home })).code, 0);
   assert.equal(readFileSync(join(home, "config.json")).length > 0, true);
 
   const server = mcp(home, "claude-code.api", project);
   const init = await server.call("initialize", { protocolVersion: "2025-06-18" });
-  assert.match(init.instructions, /chitranjan\/claude-code\.api/);
-  assert.deepEqual((await server.call("tools/list")).tools.map((t) => t.name), ["line_agents", "line_ask", "line_inbox", "line_reply"]);
+  assert.match(init.instructions, /ashish\/claude-code\.api/);
+  assert.deepEqual((await server.call("tools/list")).tools.map((t) => t.name), ["agents", "ask", "inbox", "reply"]);
 
   await invite.ready();
   const nitin = await join_(invite, "nitin/root", { kind: "root", answers: true, priority: 10 });
-  for (let i = 0; i < 50 && !nitin.roster.some((a) => a.agent === "chitranjan/claude-code.api"); i++) await sleep(100);
-  assert.match((await server.tool("line_agents")).text, /nitin\/root \(root, answers\)/);
+  for (let i = 0; i < 50 && !nitin.roster.some((a) => a.agent === "ashish/claude-code.api"); i++) await sleep(100);
+  assert.match((await server.tool("agents")).text, /nitin\/root \(root, answers\)/);
 
   // Mid-task: the PostToolUse hook adds it to Claude's context, once.
-  const asked = nitin.ask("@chitranjan", "What type is expires_in?", { timeout: 20000 });
+  const asked = nitin.ask("@ashish", "What type is expires_in?", { timeout: 20000 });
   let shown;
   for (let i = 0; i < 50; i++) {
     shown = await run(["hook", "--agent", "claude-code.api"], { home, input: JSON.stringify({ hook_event_name: "PostToolUse" }) });
@@ -148,7 +148,7 @@ test("a project's Claude Code: asked, shown mid-task by the hook, woken when idl
 
   // Claude replies, with a file; the asker gets both.
   const messageId = context.additionalContext.match(/\[([0-9a-f]{32})\]/)[1];
-  const replied = await server.tool("line_reply", { message_id: messageId, message: "int, UNIX epoch", files: ["schema.py"] });
+  const replied = await server.tool("reply", { message_id: messageId, message: "int, UNIX epoch", files: ["schema.py"] });
   assert.equal(replied.isError, false);
   const { reply } = await asked;
   assert.equal(reply.text, "int, UNIX epoch");
@@ -160,7 +160,7 @@ test("a project's Claude Code: asked, shown mid-task by the hook, woken when idl
   const second = run(["wait", "--agent", "claude-code.api"], { home });
   assert.equal((await first).code, 0);
   await sleep(300);
-  await nitin.send("chitranjan/claude-code.api", "Are you free to review?", { files: [{ name: "big.bin", data: new Uint8Array(randomBytes(65536 + 10)) }] });
+  await nitin.send("ashish/claude-code.api", "Are you free to review?", { files: [{ name: "big.bin", data: new Uint8Array(randomBytes(65536 + 10)) }] });
   const woken = await second;
   assert.equal(woken.code, 2);
   assert.match(woken.stderr, /Are you free to review\?/);
@@ -168,9 +168,9 @@ test("a project's Claude Code: asked, shown mid-task by the hook, woken when idl
 
   // Claude asks back and waits for the answer.
   nitin.onMessage = (message) => nitin.send(message.from, `seen: ${message.text}`, { replyTo: message.id });
-  const back = await server.tool("line_ask", { to: "nitin/root", message: "ping", wait_seconds: 20 });
+  const back = await server.tool("ask", { to: "nitin/root", message: "ping", wait_seconds: 20 });
   assert.match(back.text, /Answer:[\s\S]*seen: ping/);
-  assert.match((await server.tool("line_ask", { to: "nitin/root", message: "x", files: ["nope.txt"] })).text, /not a file/);
+  assert.match((await server.tool("ask", { to: "nitin/root", message: "x", files: ["nope.txt"] })).text, /not a file/);
 
   nitin.close();
   server.close();
@@ -192,10 +192,10 @@ test("setup adds the hooks next to the project's own, idempotently, and remove t
   assert.deepEqual(settings.permissions, own.permissions);
   const commands = Object.values(settings.hooks).flat().flatMap((g) => g.hooks.map((h) => h.command));
   assert.equal(commands.filter((c) => c === "lint.sh").length, 1);
-  assert.equal(commands.filter((c) => c.includes("ROOT_LINE=1") && c.includes(" hook ")).length, 3);
+  assert.equal(commands.filter((c) => c.includes("CHAMBER=1") && c.includes(" hook ")).length, 3);
   const stop = settings.hooks.Stop[0].hooks[0];
   assert.equal(stop.asyncRewake, true);
-  assert.match(stop.command, /wait --agent claude-code\.root-line-proj-/);
+  assert.match(stop.command, /wait --agent claude-code\.chamber-proj-/);
   assert.match(readFileSync(join(project, ".git", "info", "exclude"), "utf8"), /\.claude\/settings\.local\.json/);
 
   await run(["remove", project, "--no-register"], { home });
@@ -205,7 +205,7 @@ test("setup adds the hooks next to the project's own, idempotently, and remove t
 test("one command: the relay serves the installer, which installs, joins and sets up the project", async () => {
   const invite = Invite.create(relay);
   const home = tmp("home");
-  const lineHome = join(home, ".root-line");
+  const lineHome = join(home, ".chamber");
   const bin = join(home, "bin");
   const project = tmp("nitins-api");
   await new Promise((done) => spawn("git", ["init", "-q"], { cwd: project }).on("close", done));
@@ -218,7 +218,7 @@ test("one command: the relay serves the installer, which installs, joins and set
   const result = await new Promise((done) => {
     const child = spawn("sh", ["-c", `curl -fsSL ${relay}/install | sh -s -- ${invite.secret} nitin`], {
       cwd: project,
-      env: { ...process.env, HOME: home, ROOT_LINE_HOME: lineHome, ROOT_LINE_BIN: bin, ROOT_LINE_NO_REGISTER: "1" },
+      env: { ...process.env, HOME: home, CHAMBER_HOME: lineHome, CHAMBER_BIN: bin, CHAMBER_NO_REGISTER: "1" },
     });
     children.add(child);
     let out = "";
@@ -227,15 +227,15 @@ test("one command: the relay serves the installer, which installs, joins and set
     child.on("close", (code) => done({ code, out }));
   });
   assert.equal(result.code, 0, result.out);
-  assert.match(result.out, /on the line as nitin/);
-  assert.match(result.out, /its Claude Code is on the line as nitin\/claude-code\.root-line-nitins-api/);
+  assert.match(result.out, /in the chamber as nitin/);
+  assert.match(result.out, /its Claude Code is in the chamber as nitin\/claude-code\.chamber-nitins-api/);
   assert.equal(JSON.parse(readFileSync(join(lineHome, "config.json"), "utf8")).invite, String(invite));
   const hooks = JSON.parse(readFileSync(join(project, ".claude", "settings.local.json"), "utf8")).hooks;
-  assert.match(hooks.Stop[0].hooks[0].command, new RegExp(`${lineHome}/app/bin/line.mjs`));
+  assert.match(hooks.Stop[0].hooks[0].command, new RegExp(`${lineHome}/app/bin/chamber.mjs`));
 
   // The installed command works on its own.
   const status = await new Promise((done) => {
-    const child = spawn(join(bin, "root-line"), ["invite"], { env: { ...process.env, HOME: home, ROOT_LINE_HOME: lineHome } });
+    const child = spawn(join(bin, "chamber"), ["invite"], { env: { ...process.env, HOME: home, CHAMBER_HOME: lineHome } });
     let out = "";
     child.stdout.on("data", (d) => (out += d));
     child.on("close", (code) => done({ code, out }));

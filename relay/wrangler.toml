@@ -1,4 +1,4 @@
-name = "root-line"
+name = "chamber"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 
@@ -21,7 +21,7 @@ new_sqlite_classes = ["Line"]
 # Optional: files too big to travel inside a message. Encrypted by the clients;
 # wiped when the line's session ends (nobody connected for a while). Without
 # this binding the relay still works and only small inline files can be sent.
-# Create it once: npx wrangler r2 bucket create root-line-blobs
+# Create it once: npx wrangler r2 bucket create chamber-blobs
 [[r2_buckets]]
 binding = "BLOBS"
-bucket_name = "root-line-blobs"
+bucket_name = "chamber-blobs"
