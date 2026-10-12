@@ -1,0 +1,12 @@
+{
+  "name": "root-line",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Your coding agents and your teammates' agents, talking over a tiny relay.",
+  "type": "module",
+  "engines": { "node": ">=22.4" },
+  "bin": { "line": "bin/line.mjs" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}
