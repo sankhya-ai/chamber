@@ -456,6 +456,17 @@ test("channels: boards hear everything, Claude Code only @mentions; offline gets
   await ashBoard.channel("join", "#backend");
   await sleep(200);
   await ashBoard.send("#backend", "joined, reading now");
+
+  // Anyone in a channel can add a teammate; the added one hears it from then on.
+  await nitBoard.channel("join", "#ops");
+  await nitBoard.channel("add", "#ops", "ashish");
+  await sleep(300);
+  assert.ok(ashBoard.channels.find((c) => c.name === "#ops")?.members.includes("ashish"));
+  const opsBefore = boardGot.length;
+  await nitBoard.send("#ops", "deploy window moved to 6");
+  await sleep(300);
+  assert.equal(boardGot.length, opsBefore + 1);
+  assert.equal(boardGot.at(-1).to, "#ops");
   for (const c of [ashBoard, back, nitBoard]) c.close();
 });
 

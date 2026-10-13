@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { api } from "@/lib/api";
-import type { BoardData } from "@/lib/board";
+import { people, type BoardData } from "@/lib/board";
 
 /** New channel, or join one you are not in. */
 export function ChannelDialog({ open, onOpenChange, data, onJoined }: {
@@ -139,6 +139,70 @@ export function MembersDialog({ open, onOpenChange, admin, me, onChanged }: {
             </div>
           ))}
         </div>
+        {error ? <p className="text-destructive">{error}</p> : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** A channel's members (Slack's "People in #channel"): add teammates, or leave. */
+export function ChannelMembersDialog({ open, onOpenChange, data, channel, onLeft, onChanged }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  data: BoardData | null;
+  channel: string;
+  onLeft: () => void;
+  onChanged: () => void;
+}) {
+  const [error, setError] = useState("");
+  const me = data?.me ?? "";
+  const members = data?.channels.find((c) => c.name === channel)?.members ?? [];
+  const online = new Set((data?.agents ?? []).map((a) => a.agent.split("/")[0]));
+  const others = people(data).filter((p) => !members.includes(p.owner));
+  const act = async (work: () => Promise<unknown>) => {
+    try {
+      setError("");
+      await work();
+      onChanged();
+    } catch (e) {
+      setError(String((e as Error).message));
+    }
+  };
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>People in {channel}</DialogTitle>
+          <DialogDescription>Everyone here sees the channel on their board; @mention someone to reach their agent.</DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-1">
+          {members.map((m) => (
+            <div key={m} className="flex h-9 items-center gap-2 rounded-md px-2">
+              <Avatar name={m} size={22} online={online.has(m)} />
+              <span className="capitalize">{m}</span>
+              {m === me ? <span className="text-muted-foreground">you</span> : null}
+            </div>
+          ))}
+        </div>
+        {others.length ? (
+          <div className="flex flex-col gap-1 border-t pt-3">
+            <p className="text-muted-foreground">Add a teammate</p>
+            {others.map((p) => (
+              <button key={p.owner} onClick={() => void act(() => api.channel("add", channel, p.owner))} className="flex h-9 items-center gap-2 rounded-md px-2 text-left hover:bg-accent">
+                <Avatar name={p.owner} size={22} online={p.online} />
+                <span className="capitalize">{p.owner}</span>
+                <span className="ml-auto text-muted-foreground">Add</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="border-t pt-3 text-muted-foreground">Everyone in the chamber is here. Invite more people to the chamber first.</p>
+        )}
+        {channel !== "#general" ? (
+          <Button variant="ghost" className="self-start text-muted-foreground" onClick={() => void act(async () => (await api.channel("leave", channel), onOpenChange(false), onLeft()))}>
+            Leave {channel}
+          </Button>
+        ) : null}
         {error ? <p className="text-destructive">{error}</p> : null}
       </DialogContent>
     </Dialog>

@@ -1,10 +1,10 @@
-import { LayoutGrid, List, Plus } from "lucide-react";
+import { LayoutGrid, List, Plus, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { CommandMenu } from "@/components/CommandMenu";
 import { Composer } from "@/components/Composer";
 import { Conversation } from "@/components/Conversation";
-import { ChannelDialog, InviteDialog, MembersDialog } from "@/components/Dialogs";
+import { ChannelDialog, ChannelMembersDialog, InviteDialog, MembersDialog } from "@/components/Dialogs";
 import { MemoryView } from "@/components/MemoryView";
 import { Sidebar } from "@/components/Sidebar";
 import { TalkList } from "@/components/TalkList";
@@ -54,6 +54,7 @@ export function App() {
   const [channels, setChannels] = useState(false);
   const [invite, setInvite] = useState(false);
   const [members, setMembers] = useState(false);
+  const [channelPeople, setChannelPeople] = useState(false);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -144,6 +145,12 @@ export function App() {
           <div className="flex min-w-0 flex-1 flex-col">
             <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
               <h1 className="font-semibold capitalize">{titleOf(route.view, me)}</h1>
+              {route.view.kind === "channel" ? (
+                <button onClick={() => setChannelPeople(true)} className="flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground" title="People in this channel">
+                  <Users className="size-3.5" />
+                  {data?.channels.find((c) => route.view.kind === "channel" && c.name === route.view.name)?.members.length ?? 0}
+                </button>
+              ) : null}
               {error ? <span className="truncate text-[12px] text-destructive">{error}</span> : null}
               <div className={cn("ml-auto flex items-center gap-1", route.view.kind === "memory" && "hidden")}>
                 <div className="flex rounded-md border p-0.5">
@@ -224,6 +231,16 @@ export function App() {
         }}
       />
       <InviteDialog open={invite} onOpenChange={setInvite} />
+      {route.view.kind === "channel" ? (
+        <ChannelMembersDialog
+          open={channelPeople}
+          onOpenChange={setChannelPeople}
+          data={data}
+          channel={route.view.name}
+          onLeft={() => openView({ kind: "inbox" })}
+          onChanged={refresh}
+        />
+      ) : null}
       <MembersDialog open={members} onOpenChange={setMembers} admin={data?.admin ?? false} me={me} onChanged={refresh} />
     </TooltipProvider>
   );
