@@ -15,6 +15,10 @@ import mcp from "../../lib/mcp.mjs";
 import protocol from "../../lib/protocol.mjs";
 import setup from "../../lib/setup.mjs";
 import board from "../../lib/board.mjs";
+import admin from "../../lib/admin.mjs";
+import dreamLib from "../../lib/dream.mjs";
+import harnesses from "../../lib/harnesses.mjs";
+import memory from "../../lib/memory.mjs";
 import server from "../../lib/server.mjs";
 import boardPage from "../../board/index.html";
 import boardScript from "../../board/assets/board.mjs";
@@ -29,6 +33,10 @@ const FILES = {
   "lib/protocol.mjs": protocol,
   "lib/setup.mjs": setup,
   "lib/board.mjs": board,
+  "lib/admin.mjs": admin,
+  "lib/dream.mjs": dreamLib,
+  "lib/harnesses.mjs": harnesses,
+  "lib/memory.mjs": memory,
   "lib/server.mjs": server,
   "board/index.html": boardPage,
   "board/assets/board.mjs": boardScript,

@@ -1,10 +1,10 @@
-import { BookOpen, Check, Hash, Inbox, Layers, Moon, Plus, Search, Sun, UserPlus, Users, X } from "lucide-react";
+import { BookOpen, Check, Folder, Hash, Inbox, Layers, Moon, Plus, Search, Sun, UserPlus, Users, X } from "lucide-react";
 import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/lib/api";
-import { inView, people, type BoardData, type View } from "@/lib/board";
+import { inView, KIND, people, type BoardData, type View } from "@/lib/board";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -65,13 +65,11 @@ function IconButton({ label, onClick, children }: { label: string; onClick: (e: 
 
 /** Slack's sidebar: inbox, channels, people, your agents. */
 export function Sidebar({ data, view, dark, onView, onSearch, onNewChannel, onInvite, onMembers, onTheme, onChanged }: Props) {
-  const [adding, setAdding] = useState(false);
-  const [folder, setFolder] = useState("");
   const [naming, setNaming] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const me = data?.me ?? "";
   const waiting = data ? inView(data.cards, { kind: "inbox" }).length : 0;
-  const unread = (v: View) => (data ? inView(data.cards, v).filter((c) => c.status === "waiting").length : 0);
+  const unread = (v: View) => (data ? inView(data.cards, v, data.projects).filter((c) => c.status === "waiting").length : 0);
 
   const act = async (work: () => Promise<unknown>, done?: string) => {
     try {
@@ -82,6 +80,14 @@ export function Sidebar({ data, view, dark, onView, onSearch, onNewChannel, onIn
       setNote(String((e as Error).message));
     }
   };
+
+  const addProject = () =>
+    act(async () => {
+      const picked = await api.pickFolder();
+      if (!picked.path) return;
+      await api.addWorkspace(picked.path);
+      setNote(`Added ${picked.path.split("/").pop()}. Restart its coding agents to connect.`);
+    });
 
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col px-2 pt-3 pb-2">
@@ -132,31 +138,34 @@ export function Sidebar({ data, view, dark, onView, onSearch, onNewChannel, onIn
           {people(data).length === 0 ? <p className="px-2 text-muted-foreground">Nobody yet. Invite someone.</p> : null}
         </Section>
 
-        <Section title="Your agents" action={<IconButton label="Add a project folder" onClick={() => setAdding((v) => !v)}>{adding ? <X className="size-3.5" /> : <Plus className="size-3.5" />}</IconButton>}>
-          {adding ? (
-            <form className="px-1 pb-1" onSubmit={(e) => (e.preventDefault(), void act(() => api.addWorkspace(folder.trim()), "Added. Restart Claude Code there.").then(() => (setFolder(""), setAdding(false))))}>
-              <input autoFocus value={folder} onChange={(e) => setFolder(e.target.value)} placeholder="/path/to/project" className="h-7 w-full rounded-md border bg-background px-2 outline-none focus:border-ring" />
-            </form>
-          ) : null}
-          {(data?.workspaces ?? []).map((w) => {
-            const v: View = { kind: "agent", agent: w.agent };
+        <Section title="Projects" action={<IconButton label="Add a project folder" onClick={() => void addProject()}><Plus className="size-3.5" /></IconButton>}>
+          {(data?.projects ?? []).map((p) => {
+            const v: View = p.path ? { kind: "project", path: p.path } : { kind: "agent", agent: p.agents[0].agent };
+            const online = p.agents.some((a) => a.online);
             return (
               <Row
-                key={w.agent}
+                key={p.path || p.agents[0].agent}
                 active={same(view, v)}
                 onClick={() => onView(v)}
-                end={w.path ? (
-                  <button aria-label="Remove" className="hidden size-5 items-center justify-center rounded text-muted-foreground group-hover:inline-flex hover:text-foreground" onClick={(e) => (e.stopPropagation(), void act(() => api.removeWorkspace(w.path)))}>
+                end={p.path ? (
+                  <button aria-label="Remove from the chamber" title="Remove from the chamber" className="hidden size-5 items-center justify-center rounded text-muted-foreground group-hover:inline-flex hover:text-foreground" onClick={(e) => (e.stopPropagation(), void act(() => api.removeWorkspace(p.path), `${p.name} is out of the chamber.`))}>
                     <X className="size-3" />
                   </button>
                 ) : null}
               >
-                <span className={cn("size-2 rounded-full", w.online ? "bg-online" : "border border-muted-foreground/50")} />
-                <span className="truncate">{w.name}</span>
-                {w.kind !== "claude-code" ? <span className="text-[11px] text-muted-foreground">{w.kind}</span> : null}
+                <Folder className={cn("size-3.5 shrink-0", online ? "text-online" : "text-muted-foreground/60")} />
+                <span className="truncate" title={p.path || undefined}>{p.path ? p.name : KIND[p.agents[0].kind] ?? p.name}</span>
+                <span className="ml-1 flex gap-0.5">
+                  {p.agents.map((a) => (
+                    <span key={a.agent} title={`${KIND[a.kind] ?? a.kind}${a.online ? " · connected" : " · not running"}`} className={cn("rounded px-1 text-[10px] leading-4", a.online ? "bg-online/15 text-online" : "bg-accent text-muted-foreground")}>
+                      {(KIND[a.kind] ?? a.kind).slice(0, 1)}
+                    </span>
+                  ))}
+                </span>
               </Row>
             );
           })}
+          {!(data?.projects ?? []).length ? <p className="px-2 text-muted-foreground">Add a project folder to put its coding agents in the chamber.</p> : null}
         </Section>
       </nav>
 

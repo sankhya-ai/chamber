@@ -39,6 +39,7 @@ export const api = {
   setDone: (id: string, done: boolean) => post<{ ok: boolean }>(`/api/board/talks/${encodeURIComponent(id)}/done`, { done }),
   channel: (op: "join" | "leave" | "add", name: string, owner?: string) => post<{ ok: boolean; channel: string }>("/api/board/channels", { op, name, owner }),
   addWorkspace: (path: string) => post<{ output: string }>("/api/board/workspaces", { path }),
+  pickFolder: () => post<{ path?: string; cancelled?: boolean }>("/api/board/workspaces/pick"),
   removeWorkspace: (path: string) => post<{ output: string }>("/api/board/workspaces/remove", { path }),
   invite: () => request<{ command: string }>("/api/board/invite"),
   memory: () => request<{ files: { path: string; version: number; author: string; ts: number }[] }>("/api/board/memory"),

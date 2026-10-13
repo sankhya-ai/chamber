@@ -7,7 +7,8 @@
 //   chamber memory [path]           read the team's memory (MEMORY.md)
 //   chamber dream                   tidy the team's memory now (needs OPENROUTER_API_KEY)
 //   chamber revoke <name>           (admin) remove a teammate
-//   chamber setup                   put the Claude Code of the project you are in in the chamber
+//   chamber setup                   put the project you are in in the chamber: its Claude Code, Codex,
+//                                   Antigravity, and your DeepSeek Harness (--harness codex,… to choose)
 //   chamber status                  who is in the chamber
 //   chamber send <to> <text>        send from the terminal (--file path, --reply-to <id> to answer)
 //   chamber listen                  wait for the next message to you and print it (--timeout seconds)
@@ -43,6 +44,9 @@ const { values: opts, positionals } = parseArgs({
     "reply-to": { type: "string" },
     port: { type: "string" },
     "no-open": { type: "boolean" },
+    format: { type: "string" },
+    event: { type: "string" },
+    harness: { type: "string" },
     timeout: { type: "string" },
   },
 });
@@ -136,16 +140,19 @@ async function main() {
       const config = needConfig();
       const { setup } = await import("../lib/setup.mjs");
       const register = !opts["no-register"] && !process.env.CHAMBER_NO_REGISTER;
-      const result = setup(positionals[0] || ".", { name: opts.name, wake: !opts["no-wake"], register });
-      console.log(`${basename(resolve(positionals[0] || "."))}: its Claude Code is in the chamber as ${config.owner}/${result.name}.`);
-      if (result.registered || !register) console.log("Restart Claude Code in this project to connect.");
+      const harnesses = opts.harness ? opts.harness.split(",").map((h) => h.trim()).filter(Boolean) : null;
+      const result = setup(positionals[0] || ".", { name: opts.name, wake: !opts["no-wake"], register, harnesses });
+      const LABEL = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity", dsh: "DeepSeek Harness (for you, in every project)" };
+      console.log(`${basename(resolve(positionals[0] || "."))}: in the chamber now:`);
+      for (const h of result.harnesses) console.log(`  ${LABEL[h.harness]}  as ${config.owner}/${h.agent}`);
+      if (result.registered || !register) console.log("Restart them in this project to connect.");
       else console.log(`Could not run the claude command; register the MCP server yourself, then restart Claude Code:\n  ${result.manual}`);
       return 0;
     }
     case "remove": {
       const { teardown } = await import("../lib/setup.mjs");
       teardown(positionals[0] || ".", { register: !opts["no-register"] && !process.env.CHAMBER_NO_REGISTER, name: opts.name });
-      console.log("Removed the chamber from this project's Claude Code.");
+      console.log("Took this project's agents out of the chamber.");
       return 0;
     }
     case "status": {
@@ -211,14 +218,14 @@ async function main() {
     }
     case "hook": {
       const { hook } = await import("../lib/hooks.mjs");
-      return hook(opts.agent || "claude-code");
+      return hook(opts.agent || "claude-code", { format: opts.format || "claude", event: opts.event || "" });
     }
     case "wait": {
       const { wait } = await import("../lib/hooks.mjs");
       return wait(opts.agent || "claude-code");
     }
     default:
-      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 19).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 20).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
       return command ? 1 : 0;
   }
 }

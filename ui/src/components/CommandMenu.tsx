@@ -1,4 +1,4 @@
-import { BookOpen, Hash, Inbox, Layers, MessageSquarePlus, Moon, UserPlus } from "lucide-react";
+import { BookOpen, Folder, Hash, Inbox, Layers, MessageSquarePlus, Moon, UserPlus } from "lucide-react";
 
 import { Avatar } from "@/components/Avatar";
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "@/components/ui/command";
@@ -43,9 +43,9 @@ export function CommandMenu({ open, onOpenChange, data, onView, onTalk, onNewTal
               <Avatar name={owner} size={18} online={online} /> <span className="capitalize">{owner}</span>
             </CommandItem>
           ))}
-          {(data?.workspaces ?? []).map((w) => (
-            <CommandItem key={w.agent} value={w.agent} onSelect={run(() => onView({ kind: "agent", agent: w.agent }))}>
-              <span className={w.online ? "size-2 rounded-full bg-online" : "size-2 rounded-full border border-muted-foreground/50"} /> {w.name}
+          {(data?.projects ?? []).filter((p) => p.path).map((p) => (
+            <CommandItem key={p.path} value={`${p.name} ${p.path}`} onSelect={run(() => onView({ kind: "project", path: p.path }))}>
+              <Folder /> {p.name}
             </CommandItem>
           ))}
         </CommandGroup>

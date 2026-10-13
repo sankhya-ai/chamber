@@ -37,6 +37,12 @@ export interface Workspace {
   online: boolean;
 }
 
+export interface Project {
+  path: string; // "" for an agent with no folder (e.g. DeepSeek Harness)
+  name: string;
+  agents: { agent: string; kind: string; online: boolean }[];
+}
+
 export interface Channel {
   name: string;
   members: string[];
@@ -60,6 +66,7 @@ export interface BoardData {
   agents: Agent[];
   channels: Channel[];
   workspaces: Workspace[];
+  projects: Project[];
   cards: Card[];
 }
 
@@ -70,6 +77,7 @@ export type View =
   | { kind: "channel"; name: string }
   | { kind: "person"; owner: string }
   | { kind: "agent"; agent: string }
+  | { kind: "project"; path: string }
   | { kind: "memory" };
 
 export const STATUSES: { status: Status; label: string }[] = [
@@ -79,6 +87,9 @@ export const STATUSES: { status: Status; label: string }[] = [
 ];
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** Short names for the kinds of coding agent. */
+export const KIND: Record<string, string> = { "claude-code": "Claude", codex: "Codex", antigravity: "Antigravity", dsh: "DeepSeek", root: "root" };
 export const ownerOf = (agent: string) => (agent.startsWith("@") ? agent.slice(1) : agent.split("/")[0]);
 export const isMine = (agent: string, me: string) => agent.startsWith(`${me}/`) || agent === `@${me}`;
 
@@ -91,7 +102,9 @@ export function who(agent: string, me: string): string {
   const [owner, name = ""] = agent.split("/");
   const mine = owner === me;
   if (name === "board" || name === "terminal") return mine ? "you" : cap(owner);
-  const thing = name === "root" ? "root" : name.startsWith("claude-code.") ? `Claude · ${name.slice(12)}` : name;
+  const [kind, ...rest] = name.split(".");
+  const where = rest.join(".");
+  const thing = name === "root" ? "root" : name === "dsh" ? "DeepSeek" : KIND[kind] ? `${KIND[kind]}${where ? ` · ${where}` : ""}` : name;
   return mine ? `your ${thing}` : `${cap(owner)}'s ${thing}`;
 }
 
@@ -113,8 +126,8 @@ export function people(data: BoardData | null): { owner: string; online: boolean
   return [...seen].sort((a, b) => Number(online.has(b)) - Number(online.has(a)) || a.localeCompare(b)).map((owner) => ({ owner, online: online.has(owner) }));
 }
 
-/** The cards a view shows. */
-export function inView(cards: Card[], view: View): Card[] {
+/** The cards a view shows (`projects` resolves a project view to its agents). */
+export function inView(cards: Card[], view: View, projects: Project[] = []): Card[] {
   switch (view.kind) {
     case "inbox":
       return cards.filter((c) => c.status === "waiting");
@@ -126,6 +139,10 @@ export function inView(cards: Card[], view: View): Card[] {
       return cards.filter((c) => !c.channel && c.with.some((p) => ownerOf(p) === view.owner));
     case "agent":
       return cards.filter((c) => c.people.includes(view.agent));
+    case "project": {
+      const agents = new Set(projects.find((p) => p.path === view.path)?.agents.map((a) => a.agent) ?? []);
+      return cards.filter((c) => c.people.some((p) => agents.has(p)));
+    }
     case "memory":
       return [];
   }
@@ -134,6 +151,7 @@ export function inView(cards: Card[], view: View): Card[] {
 /** Where a new message typed in a view goes. */
 export function addressFor(view: View): string {
   if (view.kind === "channel") return view.name;
+  if (view.kind === "project" || view.kind === "memory") return "";
   if (view.kind === "person") return `@${view.owner}`;
   if (view.kind === "agent") return view.agent;
   return "";
@@ -145,6 +163,7 @@ export function titleOf(view: View, me: string): string {
   if (view.kind === "channel") return view.name;
   if (view.kind === "person") return cap(view.owner);
   if (view.kind === "memory") return "Memory";
+  if (view.kind === "project") return view.path.split("/").pop() || view.path;
   return who(view.agent, me);
 }
 

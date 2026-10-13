@@ -16,6 +16,9 @@ test("names read as people", () => {
   assert.equal(who("nitin/claude-code.web", "ashish"), "Nitin's Claude · web");
   assert.equal(who("nitin/board", "ashish"), "Nitin");
   assert.equal(who("#general", "ashish"), "#general");
+  assert.equal(who("nitin/codex.tura", "ashish"), "Nitin's Codex · tura");
+  assert.equal(who("ashish/antigravity.root", "ashish"), "your Antigravity · root");
+  assert.equal(who("ashish/dsh", "ashish"), "your DeepSeek");
 });
 
 test("each view shows its own talks", () => {
@@ -30,6 +33,8 @@ test("each view shows its own talks", () => {
   assert.deepEqual(inView(cards, { kind: "agent", agent: "ashish/claude-code.api" }).map((c) => c.id), ["mine"]);
   assert.equal(addressFor({ kind: "channel", name: "#backend" }), "#backend");
   assert.equal(addressFor({ kind: "person", owner: "nitin" }), "@nitin");
+  const projects = [{ path: "/w/api", name: "api", agents: [{ agent: "ashish/claude-code.api", kind: "claude-code", online: true }, { agent: "ashish/codex.api", kind: "codex", online: false }] }];
+  assert.deepEqual(inView(cards, { kind: "project", path: "/w/api" }, projects).map((c) => c.id), ["mine"]);
 });
 
 test("people: teammates seen anywhere, online first, never you", () => {
@@ -56,7 +61,7 @@ test("replies stay in their channel, else go to whoever spoke last", () => {
 
 test("routes round-trip through the URL", async () => {
   const { format, parse } = await import("./route.ts");
-  for (const hash of ["#/inbox", "#/all?t=abc", "#/c/backend", "#/p/nitin?t=new", "#/a/ashish/claude-code.api", "#/memory"]) {
+  for (const hash of ["#/inbox", "#/all?t=abc", "#/c/backend", "#/p/nitin?t=new", "#/a/ashish/claude-code.api", "#/memory", "#/project/%2FUsers%2Fa%2Ftura"]) {
     assert.equal(format(parse(hash)), hash);
   }
   assert.deepEqual(parse("#/c/backend").view, { kind: "channel", name: "#backend" });

@@ -40,6 +40,7 @@ const EMPTY: Record<View["kind"], string> = {
   channel: "Nothing said here yet.",
   person: "You haven't talked yet.",
   agent: "This agent hasn't talked with anyone yet.",
+  project: "This project's agents haven't talked with anyone yet.",
   memory: "",
 };
 
@@ -103,7 +104,7 @@ export function App() {
   });
 
   const me = data?.me ?? "";
-  const cards = useMemo(() => inView(data?.cards ?? [], route.view), [data, route.view]);
+  const cards = useMemo(() => inView(data?.cards ?? [], route.view, data?.projects ?? []), [data, route.view]);
   const known = useMemo(() => {
     const names = people(data).map((p) => p.owner);
     const chans = (data?.channels ?? []).filter((c) => c.joined).map((c) => c.name);

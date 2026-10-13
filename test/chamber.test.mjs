@@ -60,7 +60,7 @@ after(() => {
 
 function run(args, { home, input = "", cwd = ROOT, env = {} } = {}) {
   return new Promise((done) => {
-    const child = spawn(process.execPath, [BIN, ...args], { cwd, env: { ...process.env, CHAMBER_HOME: home, ...env } });
+    const child = spawn(process.execPath, [BIN, ...args], { cwd, env: { ...process.env, CHAMBER_HOME: home, CHAMBER_HARNESSES: "claude", ...env } });
     children.add(child);
     let stdout = "";
     let stderr = "";
@@ -211,6 +211,8 @@ test("one command: the relay serves the installer, which installs, joins and set
   await new Promise((done) => spawn("git", ["init", "-q"], { cwd: project }).on("close", done));
 
   const script = await (await fetch(`${relay}/install`)).text();
+  const { readdirSync } = await import("node:fs");
+  for (const f of readdirSync(join(ROOT, "lib"))) assert.match(script, new RegExp(`lib/${f}`), `the installer must hand out lib/${f}`);
   assert.match(script, new RegExp(`RELAY="${relay}"`));
   assert.equal(await (await fetch(`${relay}/client/lib/protocol.mjs`)).text(), readFileSync(join(ROOT, "lib", "protocol.mjs"), "utf8"));
   assert.equal((await fetch(`${relay}/client/../../etc/passwd`)).status, 404);
@@ -218,7 +220,7 @@ test("one command: the relay serves the installer, which installs, joins and set
   const result = await new Promise((done) => {
     const child = spawn("sh", ["-c", `curl -fsSL ${relay}/install | sh -s -- ${invite.secret} nitin`], {
       cwd: project,
-      env: { ...process.env, HOME: home, CHAMBER_HOME: lineHome, CHAMBER_BIN: bin, CHAMBER_NO_REGISTER: "1" },
+      env: { ...process.env, HOME: home, CHAMBER_HOME: lineHome, CHAMBER_BIN: bin, CHAMBER_NO_REGISTER: "1", CHAMBER_HARNESSES: "claude" },
     });
     children.add(child);
     let out = "";
@@ -228,7 +230,7 @@ test("one command: the relay serves the installer, which installs, joins and set
   });
   assert.equal(result.code, 0, result.out);
   assert.match(result.out, /in the chamber as nitin/);
-  assert.match(result.out, /its Claude Code is in the chamber as nitin\/claude-code\.chamber-nitins-api/);
+  assert.match(result.out, /Claude Code  as nitin\/claude-code\.chamber-nitins-api/);
   assert.equal(JSON.parse(readFileSync(join(lineHome, "config.json"), "utf8")).invite, String(invite));
   assert.ok(existsSync(join(lineHome, "app", "board", "assets", "board.mjs")), "the board comes with the install");
   const hooks = JSON.parse(readFileSync(join(project, ".claude", "settings.local.json"), "utf8")).hooks;
@@ -575,4 +577,49 @@ test("team memory: sealed, versioned, stale writes rejected, Claude's tools, and
   assert.match(dreamt.stdout, /Dreamt: added owners; linked from MEMORY.md \(2 file\(s\) changed/);
   assert.match((await a.read("owners.md")).text, /nitin owns tura-website billing/);
   assert.equal((await a.history())[0].message, "dream: added owners; linked from MEMORY.md");
+});
+
+test("harnesses: Codex, Antigravity and DeepSeek Harness get the tools and hooks, and remove takes them out", async () => {
+  const home = tmp("harness");
+  const dshHome = tmp("dsh");
+  const project = tmp("proj");
+  mkdirSync(join(project, ".git", "info"), { recursive: true });
+  mkdirSync(join(project, ".codex"));
+  writeFileSync(join(project, ".codex", "config.toml"), 'model = "o4"\n');
+  mkdirSync(join(project, ".agents"));
+  writeFileSync(join(project, ".agents", "mcp_config.json"), JSON.stringify({ mcpServers: { github: { command: "gh-mcp" } } }));
+  writeFileSync(join(dshHome, "cordis.patch.yml"), "- id: mine\n  name: x\n");
+  await run(["join", String(Invite.create(relay)), "--as", "ashish"], { home });
+  const env = { CHAMBER_HARNESSES: "codex,antigravity,dsh", DSH_HOME: dshHome };
+  const set = await run(["setup", project, "--no-register"], { home, env });
+  assert.equal(set.code, 0, set.stderr);
+  assert.match(set.stdout, /Codex\s+as ashish\/codex\.root-line|Codex\s+as ashish\/codex\./);
+
+  const codex = readFileSync(join(project, ".codex", "config.toml"), "utf8");
+  assert.match(codex, /^model = "o4"/, "the project's own settings stay");
+  assert.match(codex, /\[mcp_servers\.chamber\]/);
+  for (const e of ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]) assert.match(codex, new RegExp(`\\[\\[hooks\\.${e}\\]\\]`));
+  const ag = JSON.parse(readFileSync(join(project, ".agents", "mcp_config.json"), "utf8"));
+  assert.ok(ag.mcpServers.github && ag.mcpServers.chamber, "Antigravity keeps its servers and gets chamber");
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(project, ".agents", "hooks.json"), "utf8")).chamber), ["SessionStart", "PreInvocation", "Stop"]);
+  const patch = readFileSync(join(dshHome, "cordis.patch.yml"), "utf8");
+  assert.match(patch, /- id: mine/);
+  assert.match(patch, /id: chamber-mcp[\s\S]*dsh-hooks-claude-code/);
+  assert.match(readFileSync(join(project, ".git", "info", "exclude"), "utf8"), /\.codex\/config\.toml/);
+
+  // Their hooks speak each harness's format.
+  const agent = /--agent (codex\.[\w.-]+)/.exec(codex)[1];
+  const inbox = join(home, "agents", `ashish__${agent}`);
+  mkdirSync(inbox, { recursive: true });
+  writeFileSync(join(inbox, "inbox.jsonl"), JSON.stringify({ id: "m1", from: "nitin/claude-code.web", to: "@ashish", text: "ping", ts: 1, files: [] }) + "\n");
+  const stop = await run(["hook", "--agent", agent, "--format", "codex"], { home, input: JSON.stringify({ hook_event_name: "Stop" }) });
+  assert.equal(JSON.parse(stop.stdout).decision, "block", "a waiting message keeps Codex going");
+  assert.equal((await run(["hook", "--agent", agent, "--format", "codex"], { home, input: JSON.stringify({ hook_event_name: "Stop" }) })).stdout, "", "and only once");
+  writeFileSync(join(inbox, "inbox.jsonl"), JSON.stringify({ id: "m2", from: "nitin/claude-code.web", to: "@ashish", text: "pong", ts: 2, files: [] }) + "\n", { flag: "a" });
+  const pre = await run(["hook", "--agent", agent, "--format", "antigravity", "--event", "PreInvocation"], { home, input: "{}" });
+  assert.match(JSON.parse(pre.stdout).injectSteps[0].systemMessage.systemMessage, /pong/);
+
+  await run(["remove", project, "--no-register"], { home, env });
+  assert.equal(readFileSync(join(project, ".codex", "config.toml"), "utf8"), 'model = "o4"\n');
+  assert.equal(JSON.parse(readFileSync(join(project, ".agents", "mcp_config.json"), "utf8")).mcpServers.chamber, undefined);
 });

@@ -83,7 +83,7 @@ function Files({ onTalk }: { onTalk: (id: string) => void }) {
           </div>
         ))}
         {top.map((f) => <FileButton key={f.path} file={f} open={open === f.path} onOpen={() => setOpen(f.path)} label={f.path} />)}
-        {!files.length ? <p className="px-2 py-4 text-muted-foreground">Empty so far. Agents remember decisions, contracts and owners as they talk; dreams tidy it up.</p> : null}
+        {!files.length ? <p className="px-2 py-4 text-muted-foreground">Empty so far. Agents remember decisions, contracts and owners as they talk.</p> : null}
       </aside>
 
       <div className="scroll-thin min-w-0 flex-1 overflow-y-auto px-8 py-6">
@@ -233,7 +233,7 @@ export function MemoryView({ onTalk }: { onTalk: (id: string) => void }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-1 border-b px-3">
-        {(["files", "history", "dreams"] as const).map((t) => (
+        {(["files", "history"] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)} className={cn("h-7 rounded-md px-3 capitalize text-muted-foreground hover:text-foreground", tab === t && "bg-accent text-foreground")}>
             {t}
           </button>

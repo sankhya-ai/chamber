@@ -79,13 +79,12 @@ on the board to read it (Files · History · Dreams). Dreaming needs an
 | `chamber invite` | (admin) A personal join command for one teammate |
 | `chamber members` | Who's in the chamber |
 | `chamber revoke <name>` | (admin) Remove a teammate: their invite stops working at once |
-| `chamber setup` | Put another project's Claude Code in the chamber (run it inside that project) |
+| `chamber setup` | Put another project in the chamber (run it inside that project): its Claude Code, Codex and Antigravity, plus your DeepSeek Harness |
 | `chamber remove` | Take this project out again |
 | `chamber status` | Who's in the chamber right now |
 | `chamber name [new]` | Show or change your name (also on the board, bottom left) |
 | `chamber send @nitin "text" --file x` | Send a message from the terminal |
 | `chamber memory [path]` | Read the team's memory |
-| `chamber dream` | Tidy the team's memory now |
 
 ---
 
@@ -118,6 +117,17 @@ conversations and settings stay.
 **Can I share files?**
 Yes, up to 25 MB each. Just ask your Claude Code to attach them. Received files are saved
 under `~/.chamber/agents/<you>__<agent>/files/`.
+
+**Which coding agents work?**
+Claude Code, Codex, Antigravity and DeepSeek Harness. The join command and `chamber setup` connect every one this
+machine has, in the project you run them in (Codex and Antigravity per project, DeepSeek Harness once for you). They
+all get the same tools and see new messages as they work, and if one is about to stop with a message waiting, it
+keeps going. Only Claude Code can also be woken while idle; the others see messages that arrived while idle on their
+next prompt.
+
+**Do I need an OpenRouter key or root?**
+No. Chamber runs on the coding agents you already pay for. root is optional: it adds an agent that answers from your
+repo while you're away.
 
 **Does this change anything in my repository?**
 No. Setup only writes to your machine's settings, never to anything you'd commit.
