@@ -1,13 +1,12 @@
-import { CheckCircle2, Circle, CircleDot } from "lucide-react";
+import { Circle, CircleDot } from "lucide-react";
 
 import { Avatar } from "@/components/Avatar";
-import { ago, personOf, STATUSES, type Card, type Status } from "@/lib/board";
+import { ago, personOf, STATUSES, who, type Card, type Status } from "@/lib/board";
 import { cn } from "@/lib/utils";
 
 const ICON: Record<Status, React.ReactNode> = {
   waiting: <CircleDot className="size-3.5 text-waiting" />,
   talking: <Circle className="size-3.5 text-muted-foreground" />,
-  done: <CheckCircle2 className="size-3.5 text-muted-foreground/70" />,
 };
 
 function People({ card, me }: { card: Card; me: string }) {
@@ -28,7 +27,7 @@ function Row({ card, me, open, onOpen }: { card: Card; me: string; open: boolean
       className={cn("flex h-9 w-full items-center gap-3 border-b border-border/60 px-4 text-left hover:bg-accent/60", open && "bg-accent")}
     >
       {ICON[card.status]}
-      <span className={cn("min-w-0 flex-1 truncate", card.status === "done" && "text-muted-foreground")}>{card.title}</span>
+      <span className={cn("min-w-0 flex-1 truncate", card.unread ? "font-semibold" : "text-muted-foreground")}>{card.title}</span>
       {card.channel ? <span className="text-muted-foreground">{card.channel}</span> : null}
       <People card={card} me={me} />
       <span className="w-8 text-right text-muted-foreground tabular-nums">{card.count}</span>
@@ -53,20 +52,45 @@ function Tile({ card, me, open, onOpen }: { card: Card; me: string; open: boolea
   );
 }
 
-/** Linear's list (grouped by status) or board (a column per status). */
+/** Gmail's inbox: who it's from, the subject, the last message, when. Nothing else. */
+function Inbox({ cards, me, open, onOpen }: { cards: Card[]; me: string; open: string | null; onOpen: (id: string) => void }) {
+  return (
+    <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+      {cards.map((c) => {
+        const from = c.last.from;
+        return (
+          <button key={c.id} onClick={() => onOpen(c.id)} className={cn("flex h-12 w-full items-center gap-3 border-b border-border/60 px-4 text-left hover:bg-accent/60", open === c.id && "bg-accent", !c.unread && "text-muted-foreground")}>
+            <span className={cn("size-1.5 shrink-0 rounded-full", c.unread ? "bg-dot" : "bg-transparent")} />
+            <Avatar name={personOf(from, me)} size={26} className={c.unread ? "" : "opacity-60"} />
+            <span className={cn("w-44 shrink-0 truncate first-letter:uppercase", c.unread ? "font-semibold text-foreground" : "font-normal")}>{who(from, me)}</span>
+            <span className="min-w-0 flex-1 truncate">
+              <span className={c.unread ? "font-semibold text-foreground" : ""}>{c.title}</span>
+              <span className="text-muted-foreground"> — {c.last.text}</span>
+            </span>
+            {c.channel ? <span className="shrink-0 text-muted-foreground">{c.channel}</span> : null}
+            <span className={cn("w-10 shrink-0 text-right text-[12px]", c.unread ? "font-semibold text-foreground" : "text-muted-foreground")}>{ago(c.updated)}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Gmail's inbox, Linear's list (grouped by status), or a board (a column per status). */
 export function TalkList({ cards, me, layout, open, onOpen, empty }: {
   cards: Card[];
   me: string;
-  layout: "list" | "board";
+  layout: "inbox" | "list" | "board";
   open: string | null;
   onOpen: (id: string) => void;
   empty: string;
 }) {
   if (!cards.length) return <div className="flex flex-1 items-center justify-center p-8 text-muted-foreground">{empty}</div>;
+  if (layout === "inbox") return <Inbox cards={cards} me={me} open={open} onOpen={onOpen} />;
 
   if (layout === "board") {
     return (
-      <div className="grid min-h-0 flex-1 grid-cols-3 gap-3 overflow-hidden p-3">
+      <div className="grid min-h-0 flex-1 grid-cols-2 gap-3 overflow-hidden p-3">
         {STATUSES.map(({ status, label }) => {
           const column = cards.filter((c) => c.status === status);
           return (

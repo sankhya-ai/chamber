@@ -41,6 +41,7 @@ const { values: opts, positionals } = parseArgs({
     file: { type: "string", multiple: true },
     "no-wake": { type: "boolean" },
     "no-register": { type: "boolean" },
+    restore: { type: "boolean" },
     "reply-to": { type: "string" },
     port: { type: "string" },
     "no-open": { type: "boolean" },
@@ -132,8 +133,8 @@ async function main() {
       if (!isAdmin(needConfig())) throw new LineError("only your chamber's admin removes people");
       if (!positionals[0]) throw new LineError("chamber revoke <name>");
       const { revoke } = await import("../lib/admin.mjs");
-      await revoke(needConfig(), positionals[0]);
-      console.log(`Removed ${positionals[0].toLowerCase()}: their invite no longer works.`);
+      await revoke(needConfig(), positionals[0], opts.restore ? "restore" : "revoke");
+      console.log(opts.restore ? `${positionals[0].toLowerCase()} may join again (with a new invite).` : `Removed ${positionals[0].toLowerCase()}: their invite no longer works, and the name can't be used.`);
       return 0;
     }
     case "setup": {

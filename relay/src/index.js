@@ -144,6 +144,8 @@ export class Line {
     // Personal invites: which member holds a name, and members the admin removed.
     this.sql.exec("CREATE TABLE IF NOT EXISTS names (owner TEXT PRIMARY KEY, member TEXT NOT NULL, since INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS revoked (member TEXT PRIMARY KEY, at INTEGER NOT NULL)");
+    // Names the admin removed: refused from then on, even for someone who never had a pass.
+    this.sql.exec("CREATE TABLE IF NOT EXISTS removed_names (owner TEXT PRIMARY KEY, at INTEGER NOT NULL)");
     // Team memory.
     this.sql.exec("CREATE TABLE IF NOT EXISTS mem_files (path TEXT PRIMARY KEY, version INTEGER NOT NULL, body TEXT NOT NULL, author TEXT NOT NULL, ts INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS mem_versions (path TEXT NOT NULL, version INTEGER NOT NULL, body TEXT, PRIMARY KEY (path, version))");
@@ -175,6 +177,7 @@ export class Line {
     const name = String(frame.name || "").toLowerCase();
     const owner = String(frame.owner || who.owner).toLowerCase();
     if (!CHANNEL.test(name) || !OWNER.test(owner)) return this.send(ws, JSON.stringify({ t: "error", error: "a channel is #name (letters, digits, - or _)" }));
+    if (owner !== who.owner && !this.isMember(name, who.owner)) return this.send(ws, JSON.stringify({ t: "error", error: `only people in ${name} can add or remove people there` }));
     if (frame.op === "join" || frame.op === "add") this.sql.exec("INSERT OR IGNORE INTO channels (name, owner) VALUES (?, ?)", name, owner);
     else if (frame.op === "leave") this.sql.exec("DELETE FROM channels WHERE name = ? AND owner = ?", name, owner);
     else return this.send(ws, JSON.stringify({ t: "error", error: "channel op is join, add or leave" }));
@@ -199,7 +202,8 @@ export class Line {
     if (what === "members") {
       const online = new Set(this.roster().map((w) => w.owner));
       const rows = this.sql.exec("SELECT owner, member, since FROM names ORDER BY owner").toArray();
-      return json({ personal: Boolean(this.env.ADMIN_KEY), members: rows.map((r) => ({ ...r, online: online.has(r.owner) })) });
+      const removed = this.sql.exec("SELECT owner, at FROM removed_names ORDER BY owner").toArray();
+      return json({ personal: Boolean(this.env.ADMIN_KEY), members: rows.map((r) => ({ ...r, online: online.has(r.owner) })), removed });
     }
     if (what === "admin") return this.admin(await request.json().catch(() => ({})));
     if (what.startsWith("memory")) {
@@ -233,8 +237,8 @@ export class Line {
   }
 
   /** A person's agent that should take a message for them, or null if none is online. */
-  choose(owner) {
-    const theirs = this.roster().filter((who) => who.owner === owner);
+  choose(owner, answering = false) {
+    const theirs = this.roster().filter((who) => who.owner === owner && (!answering || who.answers));
     theirs.sort((a, b) => Number(b.answers) - Number(a.answers) || b.priority - a.priority || a.since - b.since);
     return theirs[0]?.agent ?? null;
   }
@@ -316,7 +320,12 @@ export class Line {
   async admin(body) {
     const claims = await signedByAdmin(this.env, body.order);
     const line = this.line || (await this.ctx.storage.get("line"));
-    if (!claims || claims.line !== line || claims.op !== "revoke" || !OWNER.test(String(claims.owner || ""))) return json({ error: "not a valid order from this chamber's admin" }, 403);
+    if (!claims || claims.line !== line || !["revoke", "restore"].includes(claims.op) || !OWNER.test(String(claims.owner || ""))) return json({ error: "not a valid order from this chamber's admin" }, 403);
+    if (claims.op === "restore") {
+      this.sql.exec("DELETE FROM removed_names WHERE owner = ?", claims.owner);
+      return json({ ok: true, restored: claims.owner });
+    }
+    this.sql.exec("INSERT OR REPLACE INTO removed_names (owner, at) VALUES (?, ?)", claims.owner, Date.now());
     const row = this.sql.exec("SELECT member FROM names WHERE owner = ?", claims.owner).toArray()[0];
     if (row) this.sql.exec("INSERT OR IGNORE INTO revoked (member, at) VALUES (?, ?)", row.member, Date.now());
     this.sql.exec("DELETE FROM names WHERE owner = ?", claims.owner);
@@ -341,6 +350,7 @@ export class Line {
     const line = this.line || (await this.ctx.storage.get("line"));
     if (!claims || claims.line !== line || !claims.member) return "this chamber needs a personal invite: ask its admin for one";
     if (this.sql.exec("SELECT 1 FROM revoked WHERE member = ?", claims.member).toArray().length) return "you were removed from this chamber by its admin";
+    if (this.sql.exec("SELECT 1 FROM removed_names WHERE owner = ?", owner).toArray().length) return `the name ${owner} was removed from this chamber by its admin`;
     const holder = this.sql.exec("SELECT member FROM names WHERE owner = ?", owner).toArray()[0];
     if (holder && holder.member !== claims.member) return `the name ${owner} belongs to someone else in this chamber; pick another (chamber name <new>)`;
     if (!holder) {
@@ -414,13 +424,20 @@ export class Line {
     missed.push(...heard);
     missed.sort((a, b) => a.seq - b.seq);
     // …and messages for its owner that waited because none of theirs was online.
-    if (this.choose(who.owner) === agent) {
+    // A message to a person waits for one of their agents that answers; their board (a seat
+    // that listens) gets a copy to show, without taking it from the agent.
+    if (who.answers && this.choose(who.owner, true) === agent) {
       const held = this.sql.exec("SELECT * FROM messages WHERE to_agent IS NULL AND to_owner = ? ORDER BY seq", who.owner).toArray();
       if (held.length) {
         this.sql.exec("UPDATE messages SET to_agent = ? WHERE to_agent IS NULL AND to_owner = ?", agent, who.owner);
         missed.push(...held.map((row) => ({ ...row, to_agent: agent })));
       }
+    } else if (who.listens) {
+      const seen = new Set(missed.map((r) => r.seq));
+      const copies = this.sql.exec("SELECT * FROM messages WHERE to_owner = ? AND seq > ? AND from_agent != ? ORDER BY seq", who.owner, since, agent).toArray();
+      missed.push(...copies.filter((r) => !seen.has(r.seq)));
     }
+    missed.sort((a, b) => a.seq - b.seq);
     for (const row of missed) this.send(ws, JSON.stringify(this.envelope(row)));
     if (missed.length) this.sql.exec(`UPDATE messages SET delivered = 1 WHERE seq IN (${missed.map((r) => Number(r.seq)).join(",")})`);
     this.ctx.storage.deleteAlarm();
@@ -442,7 +459,7 @@ export class Line {
       toAgent = to;
     } else if (to.startsWith("@") && AGENT.test(`${to.slice(1)}/x`)) {
       toOwner = to.slice(1);
-      toAgent = this.choose(toOwner);
+      toAgent = this.choose(toOwner, true); // null: held until one of their agents that answers connects
     } else if (AGENT.test(to)) toAgent = to;
     else return this.send(ws, JSON.stringify({ t: "error", error: "to must be owner/name, @owner, #channel or *", id }));
 
@@ -468,13 +485,15 @@ export class Line {
     let delivered = [];
     for (const { ws: other, who: them } of this.members()) {
       if (other === ws) continue;
-      if (toAgent === "*" || them.agent === toAgent || (toAgent?.startsWith("#") && this.hears(them, row))) {
+      const copy = toOwner && them.owner === toOwner && them.listens; // their board sees messages to them
+      if (toAgent === "*" || them.agent === toAgent || copy || (toAgent?.startsWith("#") && this.hears(them, row))) {
         this.send(other, envelope);
         delivered.push(them.agent);
       }
     }
-    if (delivered.length) this.sql.exec("UPDATE messages SET delivered = 1 WHERE seq = ?", row.seq);
-    this.send(ws, JSON.stringify({ t: "sent", id, seq: row.seq, to: toAgent, delivered, held: delivered.length === 0 }));
+    const waiting = Boolean(toOwner && !toAgent); // only a board copy so far: the person's agents haven't got it
+    if (delivered.length && !waiting) this.sql.exec("UPDATE messages SET delivered = 1 WHERE seq = ?", row.seq);
+    this.send(ws, JSON.stringify({ t: "sent", id, seq: row.seq, to: toAgent, delivered, held: waiting || delivered.length === 0 }));
   }
 
   envelope(row) {

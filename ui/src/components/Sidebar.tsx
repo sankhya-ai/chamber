@@ -68,8 +68,8 @@ export function Sidebar({ data, view, dark, onView, onSearch, onNewChannel, onIn
   const [naming, setNaming] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const me = data?.me ?? "";
-  const waiting = data ? inView(data.cards, { kind: "inbox" }).length : 0;
-  const unread = (v: View) => (data ? inView(data.cards, v, data.projects).filter((c) => c.status === "waiting").length : 0);
+  const waiting = data ? data.cards.filter((c) => c.unread).length : 0;
+  const unread = (v: View) => (data ? inView(data.cards, v, data.projects).filter((c) => c.unread).length : 0);
 
   const act = async (work: () => Promise<unknown>, done?: string) => {
     try {

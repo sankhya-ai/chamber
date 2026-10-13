@@ -35,7 +35,7 @@ function persist(key: string, value: string) {
 }
 
 const EMPTY: Record<View["kind"], string> = {
-  inbox: "Nothing is waiting on you.",
+  inbox: "You're all caught up.",
   all: "No talks yet. Start one, or wait for a teammate's agent to ask.",
   channel: "Nothing said here yet.",
   person: "You haven't talked yet.",
@@ -153,7 +153,7 @@ export function App() {
               ) : null}
               {error ? <span className="truncate text-[12px] text-destructive">{error}</span> : null}
               <div className={cn("ml-auto flex items-center gap-1", route.view.kind === "memory" && "hidden")}>
-                <div className="flex rounded-md border p-0.5">
+                <div className={cn("flex rounded-md border p-0.5", route.view.kind !== "all" && "hidden")}>
                   {(["list", "board"] as const).map((l) => (
                     <button
                       key={l}
@@ -177,7 +177,7 @@ export function App() {
             {route.view.kind === "memory" ? (
               <MemoryView onTalk={(id) => go({ view: { kind: "all" }, talk: id })} />
             ) : (
-              <TalkList cards={cards} me={me} layout={layout} open={route.talk} onOpen={openTalk} empty={EMPTY[route.view.kind]} />
+              <TalkList cards={cards} me={me} layout={route.view.kind === "inbox" ? "inbox" : route.view.kind === "all" ? layout : "list"} open={route.talk} onOpen={openTalk} empty={EMPTY[route.view.kind]} />
             )}
 
             {here && !route.talk ? (
@@ -241,7 +241,7 @@ export function App() {
           onChanged={refresh}
         />
       ) : null}
-      <MembersDialog open={members} onOpenChange={setMembers} admin={data?.admin ?? false} me={me} onChanged={refresh} />
+      <MembersDialog open={members} onOpenChange={setMembers} admin={data?.admin ?? false} me={me} data={data} onChanged={refresh} />
     </TooltipProvider>
   );
 }

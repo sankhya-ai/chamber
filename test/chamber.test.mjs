@@ -258,14 +258,14 @@ test("board: messages become conversations that say where they stand", async () 
     rec("b3", "nitin/root", "ashish/board", 5, { reply_to: "b2" }),
     rec("c1", "ashish/claude-code.root", "@nitin", 6, { title: "Port?", thread: "c1" }),
   ];
-  const cards = Object.fromEntries(threads(records, "ashish", new Set(["c1"])).map((c) => [c.id, c]));
+  const cards = Object.fromEntries(threads(records, "ashish").map((c) => [c.id, c]));
   assert.deepEqual(Object.keys(cards).sort(), ["a1", "b1", "c1"]);
   assert.equal(cards.a1.status, "talking");
   assert.equal(cards.b1.title, "Review the lease fix?");
   assert.equal(cards.b1.status, "waiting");
   assert.equal(cards.b1.count, 3);
   assert.deepEqual(cards.b1.with, ["nitin/root"]);
-  assert.equal(cards.c1.status, "done");
+  assert.equal(cards.c1.status, "talking");
 });
 
 test("chamber board: see a talk, answer it, close it, start one; only from this machine", async () => {
@@ -307,8 +307,18 @@ test("chamber board: see a talk, answer it, close it, start one; only from this 
   assert.equal(answer.text, "Yes, epoch seconds.");
   assert.equal(answer.thread, card.id);
   assert.deepEqual((await get(`/api/board/talks/${card.id}`)).messages.map((m) => m.from), ["nitin/claude-code.web", "ashish/board"]);
-  await post(`/api/board/talks/${card.id}/done`, { done: true });
-  assert.equal((await get("/api/board")).cards.find((c) => c.id === card.id).status, "done");
+  // Read, like Gmail: unread until opened.
+  const second = new Promise((done) => setTimeout(done, 50));
+  await second;
+  await nitin.send("@ashish", "One more: is it seconds or ms?", { thread: card.id, title: "Heartbeat payload", replyTo: answer.id });
+  let unread;
+  for (let i = 0; i < 50 && !unread; i++) {
+    unread = (await get("/api/board")).cards.find((c) => c.id === card.id && c.unread);
+    if (!unread) await sleep(100);
+  }
+  assert.ok(unread, "a new message from them makes it unread");
+  await get(`/api/board/talks/${card.id}?seen=1`);
+  assert.equal((await get("/api/board")).cards.find((c) => c.id === card.id).unread, false, "opening it marks it read");
 
   const fresh = new Promise((done) => (nitin.onMessage = done));
   await post("/api/board/talks", { to: "@nitin", text: "Let's play?", title: "Welcome" });
@@ -457,6 +467,15 @@ test("channels: boards hear everything, Claude Code only @mentions; offline gets
   await sleep(200);
   await ashBoard.send("#backend", "joined, reading now");
 
+  // Only people in a channel can add or remove others there.
+  const outsider = await join_(invite, "rohan/board", { kind: "human", listens: true });
+  let refusal = "";
+  outsider.ws.addEventListener("message", (e) => { const f = JSON.parse(String(e.data)); if (f.t === "error") refusal = f.error; });
+  await outsider.channel("leave", "#backend", "nitin");
+  await sleep(300);
+  assert.match(refusal, /only people in #backend/);
+  outsider.close();
+
   // Anyone in a channel can add a teammate; the added one hears it from then on.
   await nitBoard.channel("join", "#ops");
   await nitBoard.channel("add", "#ops", "ashish");
@@ -526,6 +545,20 @@ test("personal invites: a pass per member, names are theirs, the admin revokes",
     assert.equal(again.connected, false, "and their pass no longer works, under any name");
     assert.match(again.problem, /removed/);
     again.close();
+
+    // Someone who never had a pass (joined before invites were personal) is removed by name.
+    const orderFor = (owner, op) => fetch(`${url}/v1/lines/${chamber.lineId}/admin`, { method: "POST", headers: { ...chamber.auth, "content-type": "application/json" }, body: JSON.stringify({ order: revocation(admin.private, chamber.lineId, owner, op) }) });
+    assert.equal((await orderFor("mira", "revoke")).status, 200);
+    const listed = await (await fetch(`${url}/v1/lines/${chamber.lineId}/members`, { headers: chamber.auth })).json();
+    assert.deepEqual(listed.removed.map((r) => r.owner).sort(), ["mira", "nitin"]);
+    const mira = await tryJoin(as(issuePass(admin.private, chamber.lineId)), "mira/board");
+    assert.equal(mira.connected, false, "a removed name stays out, even with a new invite");
+    assert.match(mira.problem, /mira was removed/);
+    mira.close();
+    assert.equal((await orderFor("mira", "restore")).status, 200);
+    const back = await tryJoin(as(issuePass(admin.private, chamber.lineId)), "mira/board");
+    assert.equal(back.connected, true, "restored: a new invite works again");
+    back.close();
     ashish.close();
   } finally {
     process.kill(-relayProc.pid, "SIGTERM");

@@ -1,12 +1,13 @@
 // The board's data: conversations as cards, people, channels, and what each view shows.
 // Pure helpers, tested in board.test.ts.
 
-export type Status = "waiting" | "talking" | "done";
+export type Status = "waiting" | "talking";
 
 export interface Card {
   id: string;
   title: string;
   status: Status;
+  unread: boolean; // someone else said something since you last opened it (Gmail's bold)
   people: string[];
   with: string[];
   channel: string | null;
@@ -67,6 +68,7 @@ export interface BoardData {
   channels: Channel[];
   workspaces: Workspace[];
   projects: Project[];
+  removed?: string[]; // names the admin removed from the chamber
   cards: Card[];
 }
 
@@ -83,7 +85,6 @@ export type View =
 export const STATUSES: { status: Status; label: string }[] = [
   { status: "waiting", label: "Waiting on you" },
   { status: "talking", label: "Talking" },
-  { status: "done", label: "Done" },
 ];
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -123,6 +124,7 @@ export function people(data: BoardData | null): { owner: string; online: boolean
   for (const card of data.cards) for (const p of card.people) if (!p.startsWith("#") && p !== "*") seen.add(ownerOf(p));
   for (const c of data.channels) for (const m of c.members) seen.add(m);
   seen.delete(data.me);
+  for (const r of data.removed ?? []) seen.delete(r);
   return [...seen].sort((a, b) => Number(online.has(b)) - Number(online.has(a)) || a.localeCompare(b)).map((owner) => ({ owner, online: online.has(owner) }));
 }
 
@@ -130,7 +132,7 @@ export function people(data: BoardData | null): { owner: string; online: boolean
 export function inView(cards: Card[], view: View, projects: Project[] = []): Card[] {
   switch (view.kind) {
     case "inbox":
-      return cards.filter((c) => c.status === "waiting");
+      return cards; // everything, newest first; unread ones stand out
     case "all":
       return cards;
     case "channel":

@@ -1,9 +1,8 @@
-import { Check, FileText, RotateCcw, X } from "lucide-react";
+import { FileText, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { Composer } from "@/components/Composer";
-import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { address, ago, defaultRecipient, personOf, who, type Talk } from "@/lib/board";
 import { cn } from "@/lib/utils";
@@ -27,7 +26,7 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
     setTalk(null);
     if (!talkId) return;
     let live = true;
-    const load = () => api.talk(talkId).then((t) => live && setTalk(t), () => undefined);
+    const load = () => api.talk(talkId).then((t) => (live && setTalk(t), onChanged()), () => undefined);
     void load();
     const timer = setInterval(load, 2000);
     return () => {
@@ -53,13 +52,6 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
     onChanged();
   };
 
-  const toggleDone = async () => {
-    if (!talk) return;
-    await api.setDone(talk.id, talk.status !== "done");
-    setTalk(await api.talk(talk.id));
-    onChanged();
-  };
-
   return (
     <section className="flex min-h-0 w-[440px] shrink-0 flex-col border-l">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
@@ -67,12 +59,7 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
           <h2 className="truncate font-medium">{talkId ? talk?.title ?? "" : "New talk"}</h2>
           {talk ? <p className="truncate text-[12px] text-muted-foreground">{talk.channel ?? talk.with.map((p) => who(p, me)).join(", ")}</p> : null}
         </div>
-        {talk ? (
-          <Button variant="outline" size="sm" onClick={() => void toggleDone()}>
-            {talk.status === "done" ? <RotateCcw /> : <Check />}
-            {talk.status === "done" ? "Reopen" : "Done"}
-          </Button>
-        ) : null}
+
         <button aria-label="Close" onClick={onClose} className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
           <X className="size-4" />
         </button>

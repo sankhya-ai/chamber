@@ -33,10 +33,9 @@ const post = <T>(path: string, body: unknown = {}) => request<T>(path, { method:
 
 export const api = {
   board: () => request<BoardData>("/api/board"),
-  talk: (id: string) => request<Talk>(`/api/board/talks/${encodeURIComponent(id)}`),
+  talk: (id: string) => request<Talk>(`/api/board/talks/${encodeURIComponent(id)}?seen=1`), // opening a talk marks it read
   say: (id: string, to: string, text: string) => post<{ id: string; thread: string }>(`/api/board/talks/${encodeURIComponent(id)}`, { to, text }),
   startTalk: (to: string, text: string, title: string) => post<{ id: string; thread: string }>("/api/board/talks", { to, text, title }),
-  setDone: (id: string, done: boolean) => post<{ ok: boolean }>(`/api/board/talks/${encodeURIComponent(id)}/done`, { done }),
   channel: (op: "join" | "leave" | "add", name: string, owner?: string) => post<{ ok: boolean; channel: string }>("/api/board/channels", { op, name, owner }),
   addWorkspace: (path: string) => post<{ output: string }>("/api/board/workspaces", { path }),
   pickFolder: () => post<{ path?: string; cancelled?: boolean }>("/api/board/workspaces/pick"),
@@ -50,7 +49,7 @@ export const api = {
   dream: () => post<{ started: boolean }>("/api/board/memory/dream"),
   settings: () => request<{ hasKey: boolean; dreamModel: string; lastDream: number }>("/api/board/settings"),
   saveSettings: (changes: { openrouterKey?: string; dreamModel?: string }) => post<{ hasKey: boolean; dreamModel: string; lastDream: number }>("/api/board/settings", changes),
-  members: () => request<{ personal: boolean; members: { owner: string; online: boolean; since: number }[] }>("/api/board/members"),
-  revoke: (owner: string) => post<{ ok: boolean }>("/api/board/revoke", { owner }),
+  members: () => request<{ personal: boolean; members: { owner: string; online: boolean; since: number }[]; removed?: { owner: string; at: number }[] }>("/api/board/members"),
+  revoke: (owner: string, op: "revoke" | "restore" = "revoke") => post<{ ok: boolean }>("/api/board/revoke", { owner, op }),
   setName: (name: string) => post<{ name: string }>("/api/board/name", { name }),
 };

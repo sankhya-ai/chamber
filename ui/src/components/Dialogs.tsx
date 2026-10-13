@@ -81,12 +81,13 @@ export function InviteDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   );
 }
 
-/** Who is in the chamber; the admin can remove someone (their invite stops working at once). */
-export function MembersDialog({ open, onOpenChange, admin, me, onChanged }: {
+/** Who is in the chamber; the admin removes people (their invite and name stop working) or lets a name back. */
+export function MembersDialog({ open, onOpenChange, admin, me, data: board, onChanged }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   admin: boolean;
   me: string;
+  data: BoardData | null;
   onChanged: () => void;
 }) {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.members>> | null>(null);
@@ -96,12 +97,13 @@ export function MembersDialog({ open, onOpenChange, admin, me, onChanged }: {
   useEffect(() => {
     if (open) {
       setConfirm(null);
+      setError("");
       void load();
     }
   }, [open]);
-  const remove = async (owner: string) => {
+  const act = async (work: () => Promise<unknown>) => {
     try {
-      await api.revoke(owner);
+      await work();
       setConfirm(null);
       await load();
       onChanged();
@@ -109,36 +111,57 @@ export function MembersDialog({ open, onOpenChange, admin, me, onChanged }: {
       setError(String((e as Error).message));
     }
   };
+  const memberNames = new Set((data?.members ?? []).map((m) => m.owner));
+  const removed = new Set((data?.removed ?? []).map((r) => r.owner));
+  // People seen in talks or channels who never joined with a personal invite (e.g. from before invites were personal).
+  const others = people(board).filter((p) => !memberNames.has(p.owner) && !removed.has(p.owner));
+  const row = (owner: string, online: boolean | undefined, note?: string) => (
+    <div key={owner} className="flex h-9 items-center gap-2 rounded-md px-2 hover:bg-accent/60">
+      <Avatar name={owner} size={22} online={online} />
+      <span className="capitalize">{owner}</span>
+      {owner === me ? <span className="text-muted-foreground">you</span> : note ? <span className="text-muted-foreground">{note}</span> : null}
+      {admin && owner !== me ? (
+        confirm === owner ? (
+          <span className="ml-auto flex gap-1">
+            <Button size="sm" variant="destructive" onClick={() => void act(() => api.revoke(owner))}>Remove {owner}</Button>
+            <Button size="sm" variant="ghost" onClick={() => setConfirm(null)}>Cancel</Button>
+          </span>
+        ) : (
+          <Button size="sm" variant="ghost" className="ml-auto text-muted-foreground" onClick={() => setConfirm(owner)}>
+            <UserMinus /> Remove
+          </Button>
+        )
+      ) : null}
+    </div>
+  );
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Members</DialogTitle>
           <DialogDescription>
-            {data && !data.personal ? "This chamber has no personal invites yet: anyone with its key may join. Re-run create.sh to add them." : "Everyone with a personal invite to this chamber."}
+            {data && !data.personal ? "This chamber has no personal invites yet: anyone with its key may join." : "Everyone in this chamber. Removing someone disconnects them at once; their invite and name stop working."}
           </DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-1">
-          {(data?.members ?? []).map((m) => (
-            <div key={m.owner} className="flex h-9 items-center gap-2 rounded-md px-2 hover:bg-accent/60">
-              <Avatar name={m.owner} size={22} online={m.online} />
-              <span className="capitalize">{m.owner}</span>
-              {m.owner === me ? <span className="text-muted-foreground">you</span> : null}
-              {admin && m.owner !== me ? (
-                confirm === m.owner ? (
-                  <span className="ml-auto flex gap-1">
-                    <Button size="sm" variant="destructive" onClick={() => void remove(m.owner)}>Remove {m.owner}</Button>
-                    <Button size="sm" variant="ghost" onClick={() => setConfirm(null)}>Cancel</Button>
-                  </span>
-                ) : (
-                  <Button size="sm" variant="ghost" className="ml-auto text-muted-foreground" onClick={() => setConfirm(m.owner)}>
-                    <UserMinus /> Remove
-                  </Button>
-                )
-              ) : null}
-            </div>
-          ))}
-        </div>
+        <div className="flex flex-col gap-1">{(data?.members ?? []).map((m) => row(m.owner, m.online))}</div>
+        {others.length ? (
+          <div className="flex flex-col gap-1 border-t pt-3">
+            <p className="text-muted-foreground">Seen here, without a personal invite</p>
+            {others.map((p) => row(p.owner, p.online, "no invite"))}
+          </div>
+        ) : null}
+        {admin && removed.size ? (
+          <div className="flex flex-col gap-1 border-t pt-3">
+            <p className="text-muted-foreground">Removed</p>
+            {[...removed].map((owner) => (
+              <div key={owner} className="flex h-9 items-center gap-2 rounded-md px-2 text-muted-foreground">
+                <Avatar name={owner} size={22} />
+                <span className="capitalize line-through">{owner}</span>
+                <Button size="sm" variant="ghost" className="ml-auto" onClick={() => void act(() => api.revoke(owner, "restore"))}>Restore</Button>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {error ? <p className="text-destructive">{error}</p> : null}
       </DialogContent>
     </Dialog>
@@ -177,10 +200,15 @@ export function ChannelMembersDialog({ open, onOpenChange, data, channel, onLeft
         </DialogHeader>
         <div className="flex flex-col gap-1">
           {members.map((m) => (
-            <div key={m} className="flex h-9 items-center gap-2 rounded-md px-2">
+            <div key={m} className="group flex h-9 items-center gap-2 rounded-md px-2 hover:bg-accent/60">
               <Avatar name={m} size={22} online={online.has(m)} />
               <span className="capitalize">{m}</span>
               {m === me ? <span className="text-muted-foreground">you</span> : null}
+              {m !== me && members.includes(me) ? (
+                <Button size="sm" variant="ghost" className="ml-auto hidden text-muted-foreground group-hover:inline-flex" onClick={() => void act(() => api.channel("leave", channel, m))}>
+                  Remove
+                </Button>
+              ) : null}
             </div>
           ))}
         </div>

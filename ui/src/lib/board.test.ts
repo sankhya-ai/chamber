@@ -3,8 +3,8 @@ import { test } from "node:test";
 
 import { address, addressFor, ago, defaultRecipient, inView, people, who, type BoardData, type Card, type Talk } from "./board.ts";
 
-const card = (id: string, status: Card["status"], peopleIn: string[], channel: string | null = null): Card => ({
-  id, title: id, status, people: peopleIn, channel,
+const card = (id: string, status: Card["status"] | "done", peopleIn: string[], channel: string | null = null): Card => ({
+  id, title: id, status: status === "done" ? "talking" : status, unread: status === "waiting", people: peopleIn, channel,
   with: peopleIn.filter((p) => !p.startsWith("ashish/") && !p.startsWith("#")),
   count: 1, last: { from: peopleIn[0], text: "", ts: 0 }, updated: 0,
 });
@@ -27,7 +27,7 @@ test("each view shows its own talks", () => {
     card("chan", "talking", ["nitin/board", "#backend"], "#backend"),
     card("mine", "done", ["ashish/claude-code.api", "mira/root"]),
   ];
-  assert.deepEqual(inView(cards, { kind: "inbox" }).map((c) => c.id), ["dm"]);
+  assert.deepEqual(inView(cards, { kind: "inbox" }).map((c) => c.id), ["dm", "chan", "mine"]);
   assert.deepEqual(inView(cards, { kind: "channel", name: "#backend" }).map((c) => c.id), ["chan"]);
   assert.deepEqual(inView(cards, { kind: "person", owner: "nitin" }).map((c) => c.id), ["dm"]);
   assert.deepEqual(inView(cards, { kind: "agent", agent: "ashish/claude-code.api" }).map((c) => c.id), ["mine"]);
