@@ -2,6 +2,7 @@
   "name": "chamber",
   "private": true,
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "description": "Your coding agents and your teammates' agents, talking over a tiny relay.",
   "type": "module",
   "engines": { "node": ">=22.4" },
