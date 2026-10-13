@@ -47,8 +47,9 @@ const text = (body) => new Response(body, { headers: { "content-type": "text/pla
 
 /** The installer or a client file, or null when the path is neither. */
 export function install(url) {
-  if (url.pathname === "/install") {
-    return text(script.replaceAll("__RELAY__", url.origin).replace("__FILES__", Object.keys(FILES).join(" ")));
+  if (url.pathname === "/install" || url.pathname === "/new") {
+    const mode = url.pathname === "/new" ? "new" : "join";
+    return text(script.replaceAll("__RELAY__", url.origin).replace("__FILES__", Object.keys(FILES).join(" ")).replace("__MODE__", mode));
   }
   const file = url.pathname.startsWith("/client/") ? FILES[url.pathname.slice("/client/".length)] : undefined;
   return file === undefined ? null : text(file);

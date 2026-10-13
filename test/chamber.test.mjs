@@ -407,15 +407,60 @@ test("a private relay serves only its own chambers", async () => {
   }
 });
 
-test("the admin makes the chamber and invites; teammates only join", async () => {
-  const admin = tmp("admin");
-  const made = await run(["new", "--relay", relay, "--as", "ashish"], { home: admin });
-  assert.match(made.stdout, /Send each teammate this one command/);
-  const command = (await run(["invite"], { home: admin })).stdout;
-  const secret = /sh -s -- (\S+)/.exec(command)[1];
-  const mate = tmp("mate");
-  await run(["join", `${relay}/#${secret}`, "--as", "nitin"], { home: mate });
-  assert.match((await run(["invite"], { home: mate })).stderr, /only your chamber's admin/);
+/** A relay of its own (claiming locks a relay to one chamber, so claim tests can't share). */
+async function freshRelay(name, vars = []) {
+  const port = await freePort();
+  const proc = spawn(WRANGLER, ["dev", "--local", "--ip", "127.0.0.1", "--port", String(port), "--persist-to", tmp(name), ...vars.flatMap((v) => ["--var", v])], { cwd: join(ROOT, "relay"), stdio: "ignore", detached: true });
+  const url = `http://127.0.0.1:${port}`;
+  for (let i = 0; i < 120; i++) {
+    try {
+      if ((await fetch(url)).ok) break;
+    } catch {}
+    await sleep(500);
+  }
+  return { url, stop: () => process.kill(-proc.pid, "SIGTERM") };
+}
+
+test("the Deploy-button path: a fresh relay is claimed by the first chamber; the admin invites; teammates only join", async () => {
+  const fresh = await freshRelay("claim");
+  try {
+    const page = await (await fetch(fresh.url, { headers: { accept: "text/html" } })).text();
+    assert.match(page, new RegExp(`curl -fsSL ${fresh.url}/new \\| sh`), "the landing page shows the one command");
+
+    // The admin: one command, inside their project.
+    const home = tmp("admin-home");
+    const lineHome = join(home, ".chamber");
+    const project = tmp("admin-proj");
+    const made = await new Promise((done) => {
+      const child = spawn("sh", ["-c", `curl -fsSL ${fresh.url}/new | sh -s -- ashish`], { cwd: project, env: { ...process.env, HOME: home, CHAMBER_HOME: lineHome, CHAMBER_BIN: join(home, "bin"), CHAMBER_NO_REGISTER: "1", CHAMBER_HARNESSES: "claude" } });
+      children.add(child);
+      let out = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (out += d));
+      child.on("close", (code) => done({ code, out }));
+    });
+    assert.equal(made.code, 0, made.out);
+    assert.match(made.out, /you are its admin, as ashish\. The relay is now private to it\./);
+    assert.match((await (await fetch(fresh.url, { headers: { accept: "text/html" } })).text()), /belongs to a chamber/);
+    assert.equal((await fetch(`${fresh.url}/v1/claim`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 409, "a relay is claimed once");
+    const stranger = await Invite.create(fresh.url).ready();
+    assert.equal((await fetch(`${fresh.url}/v1/lines/${stranger.lineId}/roster`, { headers: stranger.auth })).status, 403, "and serves only its chamber");
+
+    // Personal invites are on: the admin's invite brings a teammate in; the teammate can't invite.
+    const admin = { CHAMBER_HOME: lineHome };
+    const command = (await run(["invite"], { home: lineHome, env: admin })).stdout;
+    const key = /sh -s -- (\S+)/.exec(command)[1];
+    assert.match(key, /~/, "a personal pass in the command");
+    const mate = tmp("mate");
+    await run(["join", `${fresh.url}/#${key}`, "--as", "nitin"], { home: mate });
+    assert.match((await run(["invite"], { home: mate })).stderr, /only your chamber's admin/);
+    const config = JSON.parse(readFileSync(join(mate, "config.json"), "utf8"));
+    const nitin = await join_(await Invite.parse(config.invite).ready(), "nitin/board", { kind: "human", listens: true });
+    assert.equal(nitin.connected, true, "the teammate is in");
+    nitin.close();
+  } finally {
+    fresh.stop();
+  }
 });
 
 test("channels: boards hear everything, Claude Code only @mentions; offline gets it later", async () => {

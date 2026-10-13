@@ -42,6 +42,7 @@ const { values: opts, positionals } = parseArgs({
     "no-wake": { type: "boolean" },
     "no-register": { type: "boolean" },
     restore: { type: "boolean" },
+    "no-setup": { type: "boolean" },
     "reply-to": { type: "string" },
     port: { type: "string" },
     "no-open": { type: "boolean" },
@@ -79,11 +80,22 @@ async function main() {
   switch (command) {
     case "new": {
       if (!opts.relay) throw new LineError("chamber new --relay https://<your relay>");
-      const invite = Invite.create(opts.relay);
+      const { claimRelay } = await import("../lib/admin.mjs");
+      const invite = await Invite.create(opts.relay).ready();
       const owner = (opts.as || defaultOwner()).toLowerCase();
-      saveConfig(invite, owner);
-      markAdmin(invite);
-      console.log(`New chamber on ${invite.relay}; you are on it as ${owner}.\n\nSend each teammate this one command, privately (it holds the chamber's key):\n\n  ${installCommand(invite)}\n\nThen, in each of your projects:  chamber setup`);
+      // A relay from the Deploy button is unclaimed: the first chamber made on it claims it
+      // (its admin key, this chamber only). A relay set up by create.sh is already private.
+      const claimed = await claimRelay(invite);
+      saveConfig(claimed.pass ? invite.withPass(claimed.pass) : invite, owner);
+      markAdmin(invite, claimed.key ? { adminPublic: claimed.key.public, adminPrivate: claimed.key.private } : {});
+      console.log(`New chamber on ${invite.relay}; you are its admin, as ${owner}.${claimed.pass ? " The relay is now private to it." : ""}`);
+      console.log("\nInvite each teammate with their own command:  chamber invite   (or Invite on the board)");
+      if (!opts["no-setup"]) {
+        const { setup } = await import("../lib/setup.mjs");
+        const register = !opts["no-register"] && !process.env.CHAMBER_NO_REGISTER;
+        const project = setup(".", { register });
+        console.log(`\n${basename(resolve("."))}: in the chamber now: ${project.harnesses.map((h) => h.agent).join(", ")}. Restart them here to connect.`);
+      }
       return 0;
     }
     case "join": {

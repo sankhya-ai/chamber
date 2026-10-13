@@ -92,6 +92,9 @@ ADMIN_PASS="${ADMIN#* }"
 printf '%s' "$LINE" | wr secret put ALLOWED_LINES >/dev/null 2>&1 || fail "could not make the relay private (wrangler secret put)"
 printf '%s' "$ADMIN_PUBLIC" | wr secret put ADMIN_KEY >/dev/null 2>&1 || fail "could not set up personal invites (wrangler secret put ADMIN_KEY)"
 echo "Relay: $RELAY (private to your chamber)"
+# A busy chamber runs the old relay code until it restarts: restart it so the update takes.
+TOKEN="$(node --input-type=module -e "const { Invite } = await import('$SRC/lib/protocol.mjs'); console.log((await new Invite('$RELAY', '$SECRET').ready()).token);")"
+curl -fsS -X POST -H "Authorization: Bearer $TOKEN" "$RELAY/v1/lines/$LINE/restart" >/dev/null 2>&1 || true
 
 # ----- 5. join, and put this project in -------------------------------------------------------
 say "5/5  Joining"

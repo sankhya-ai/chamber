@@ -40,6 +40,8 @@
 
 import { install } from "./install.js";
 
+/** Bumped when the relay changes, so a client can tell which code answered. */
+const RELAY_VERSION = 4;
 const RETENTION_MS = 7 * 24 * 3600 * 1000;
 const MAX_ROWS = 5000;
 const MAX_BODY = 900_000;
@@ -66,21 +68,25 @@ function json(body, status = 200) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === "/") return new Response("chamber relay\n");
+    if (url.pathname === "/") return request.headers.get("accept")?.includes("text/html") ? landing(url, await relayConfig(env)) : new Response("chamber relay\n");
+    if (url.pathname === "/v1/claim" && request.method === "POST") return claim(request, env);
+    if (url.pathname === "/v1/relay") return json({ claimed: (await relayConfig(env)).claimed, relay: RELAY_VERSION });
     const served = install(url);
     if (served) return served;
-    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|roster|members|admin|memory(?:\/(?:file|commit|history))?|blobs\/([^/]+))$/);
+    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|roster|members|admin|memory(?:\/(?:file|commit|history))?|restart|blobs\/([^/]+))$/);
     if (!match) return json({ error: "not found" }, 404);
     const [, line, what, blob] = match;
     const token = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
     if (!LINE.test(line) || !token || (await lineOf(token)) !== line) return json({ error: "unauthorized" }, 401);
-    const allowed = String(env.ALLOWED_LINES || "").split(",").map((s) => s.trim()).filter(Boolean);
+    const config = await relayConfig(env);
+    const allowed = config.lines;
     if (allowed.length && !allowed.includes(line)) return json({ error: "this relay serves only its own chambers" }, 403);
     if (blob !== undefined) return blobs(request, env, line, blob);
     if (what === "ws" && request.headers.get("upgrade") !== "websocket") return json({ error: "expected a WebSocket" }, 426);
     const stub = env.LINES.get(env.LINES.idFromName(line));
     const forwarded = new Request(`https://line/${what}${url.search}`, request);
     forwarded.headers.set("x-line", line);
+    if (config.adminKey) forwarded.headers.set("x-admin-key", config.adminKey); // personal invites, from secrets or the claim
     return stub.fetch(forwarded);
   },
 };
@@ -88,17 +94,58 @@ export default {
 const b64 = (text) => Uint8Array.from(atob(text.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
 
 /** The claims of a token the admin signed (pass or order), or null. */
-async function signedByAdmin(env, token) {
-  if (!env.ADMIN_KEY || typeof token !== "string") return null;
+async function signedByAdmin(adminKey, token) {
+  if (!adminKey || typeof token !== "string") return null;
   const [body, sig] = token.split(".");
   if (!body || !sig) return null;
   try {
-    const key = await crypto.subtle.importKey("raw", b64(env.ADMIN_KEY), { name: "Ed25519" }, false, ["verify"]);
+    const key = await crypto.subtle.importKey("raw", b64(adminKey), { name: "Ed25519" }, false, ["verify"]);
     if (!(await crypto.subtle.verify({ name: "Ed25519" }, key, b64(sig), new TextEncoder().encode(body)))) return null;
     return JSON.parse(new TextDecoder().decode(b64(body)));
   } catch {
     return null;
   }
+}
+
+// ----- who owns this relay --------------------------------------------------------------
+// create.sh sets the secrets ADMIN_KEY and ALLOWED_LINES. A relay deployed with the Deploy
+// button has neither: it is unclaimed until the first `chamber new` claims it (like
+// company-brain, "the first person to sign in owns the deployment"). The claim lives in a
+// config Durable Object.
+
+const CONFIG = "__chamber_relay_config__";
+let cached = { at: 0, value: null };
+
+async function relayConfig(env, fresh = false) {
+  if (env.ADMIN_KEY || env.ALLOWED_LINES) return { adminKey: env.ADMIN_KEY || null, lines: String(env.ALLOWED_LINES || "").split(",").map((s) => s.trim()).filter(Boolean), claimed: true };
+  if (!fresh && cached.value && Date.now() - cached.at < 30_000) return cached.value;
+  const stub = env.LINES.get(env.LINES.idFromName(CONFIG));
+  const value = await (await stub.fetch("https://line/config")).json();
+  cached = { at: Date.now(), value };
+  return value;
+}
+
+async function claim(request, env) {
+  const config = await relayConfig(env, true);
+  if (config.claimed) return json({ error: "this relay already belongs to a chamber" }, 409);
+  const body = await request.json().catch(() => ({}));
+  const claims = await signedByAdmin(String(body.adminPublic || ""), body.proof);
+  if (!claims || claims.op !== "claim" || !LINE.test(String(claims.line || ""))) return json({ error: "not a valid claim" }, 400);
+  const stub = env.LINES.get(env.LINES.idFromName(CONFIG));
+  const result = await stub.fetch("https://line/config-claim", { method: "POST", body: JSON.stringify({ adminKey: body.adminPublic, lines: [claims.line] }) });
+  cached = { at: 0, value: null };
+  return new Response(result.body, result);
+}
+
+function landing(url, config) {
+  const make = `curl -fsSL ${url.origin}/new | sh`;
+  const body = config.claimed
+    ? `<p>This relay belongs to a chamber. To join it, ask its admin for your personal invite.</p>`
+    : `<p>Your relay is up. Make your chamber: run this inside a project folder (needs Node 22.4+):</p><pre>${make}</pre><p>You'll be the admin: you invite your team, and this relay serves only your chamber.</p>`;
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>chamber relay</title><style>body{font:15px/1.6 -apple-system,system-ui,sans-serif;max-width:640px;margin:12vh auto;padding:0 20px;color:#1b1c1f;background:#f6f5f1}h1{font-size:22px}pre{background:#fff;border:1px solid #e4e4e1;border-radius:8px;padding:12px;white-space:pre-wrap;word-break:break-all}@media(prefers-color-scheme:dark){body{background:#0a0a0c;color:#ebecee}pre{background:#16171a;border-color:#26272b}}</style><h1>chamber<span style="color:#4e83b0">.</span></h1>${body}`,
+    { headers: { "content-type": "text/html; charset=utf-8" } },
+  );
 }
 
 async function blobs(request, env, line, blob) {
@@ -191,8 +238,30 @@ export class Line {
     return String(row.mentions || "").includes(`,${who.owner},`) && this.choose(who.owner) === who.agent;
   }
 
+  /** The admin key in force for this chamber (from the Worker; kept for hibernated wake-ups). */
+  async adminKey() {
+    if (this.env.ADMIN_KEY) return this.env.ADMIN_KEY;
+    this.key ??= (await this.ctx.storage.get("adminKey")) ?? null;
+    return this.key;
+  }
+
   async fetch(request) {
     const what = new URL(request.url).pathname.slice(1);
+    if (what === "config") {
+      const c = (await this.ctx.storage.get("config")) ?? null;
+      return json(c ? { ...c, claimed: true } : { adminKey: null, lines: [], claimed: false });
+    }
+    if (what === "config-claim") {
+      if (await this.ctx.storage.get("config")) return json({ error: "this relay already belongs to a chamber" }, 409);
+      const body = await request.json();
+      await this.ctx.storage.put("config", { adminKey: body.adminKey, lines: body.lines, at: Date.now() });
+      return json({ ok: true, claimed: true });
+    }
+    const headerKey = request.headers.get("x-admin-key");
+    if (headerKey && headerKey !== this.key) {
+      this.key = headerKey;
+      await this.ctx.storage.put("adminKey", headerKey);
+    }
     const line = request.headers.get("x-line");
     if (line && line !== this.line) {
       this.line = line;
@@ -203,9 +272,15 @@ export class Line {
       const online = new Set(this.roster().map((w) => w.owner));
       const rows = this.sql.exec("SELECT owner, member, since FROM names ORDER BY owner").toArray();
       const removed = this.sql.exec("SELECT owner, at FROM removed_names ORDER BY owner").toArray();
-      return json({ personal: Boolean(this.env.ADMIN_KEY), members: rows.map((r) => ({ ...r, online: online.has(r.owner) })), removed });
+      return json({ personal: Boolean(await this.adminKey()), members: rows.map((r) => ({ ...r, online: online.has(r.owner) })), removed, relay: RELAY_VERSION });
     }
     if (what === "admin") return this.admin(await request.json().catch(() => ({})));
+    if (what === "restart") {
+      // After a deploy: a busy chamber keeps running the old code until it restarts. Its
+      // clients reconnect at once and get the new code.
+      setTimeout(() => this.ctx.abort("the relay was updated"), 50);
+      return json({ ok: true, restarting: true, relay: RELAY_VERSION });
+    }
     if (what.startsWith("memory")) {
       const refused = await this.memberCheck(request.headers.get("x-chamber-pass"));
       if (refused) return json({ error: refused }, 403);
@@ -255,8 +330,9 @@ export class Line {
 
   /** With personal invites, memory is for members only: a valid, unrevoked pass. */
   async memberCheck(pass) {
-    if (!this.env.ADMIN_KEY) return null;
-    const claims = await signedByAdmin(this.env, pass);
+    const adminKey = await this.adminKey();
+    if (!adminKey) return null;
+    const claims = await signedByAdmin(adminKey, pass);
     const line = this.line || (await this.ctx.storage.get("line"));
     if (!claims || claims.line !== line || !claims.member) return "team memory is for members: a personal invite is needed";
     if (this.sql.exec("SELECT 1 FROM revoked WHERE member = ?", claims.member).toArray().length) return "you were removed from this chamber by its admin";
@@ -318,7 +394,7 @@ export class Line {
 
   /** A signed order from the admin: { order: <token> }. Today: revoke a member by name. */
   async admin(body) {
-    const claims = await signedByAdmin(this.env, body.order);
+    const claims = await signedByAdmin(await this.adminKey(), body.order);
     const line = this.line || (await this.ctx.storage.get("line"));
     if (!claims || claims.line !== line || !["revoke", "restore"].includes(claims.op) || !OWNER.test(String(claims.owner || ""))) return json({ error: "not a valid order from this chamber's admin" }, 403);
     if (claims.op === "restore") {
@@ -345,8 +421,9 @@ export class Line {
 
   /** May this hello use this name? With personal invites: a valid pass, not revoked, and the name is free or theirs. */
   async admit(owner, pass) {
-    if (!this.env.ADMIN_KEY) return null;
-    const claims = await signedByAdmin(this.env, pass);
+    const adminKey = await this.adminKey();
+    if (!adminKey) return null;
+    const claims = await signedByAdmin(adminKey, pass);
     const line = this.line || (await this.ctx.storage.get("line"));
     if (!claims || claims.line !== line || !claims.member) return "this chamber needs a personal invite: ask its admin for one";
     if (this.sql.exec("SELECT 1 FROM revoked WHERE member = ?", claims.member).toArray().length) return "you were removed from this chamber by its admin";

@@ -5,9 +5,15 @@
 # in (if it is a git repository) on it.
 set -e
 RELAY="__RELAY__"
-SECRET="$1"
-NAME="$2"
-if [ -z "$SECRET" ]; then
+MODE="__MODE__"
+if [ "$MODE" = "new" ]; then
+  SECRET=""
+  NAME="$1"
+else
+  SECRET="$1"
+  NAME="$2"
+fi
+if [ "$MODE" = "join" ] && [ -z "$SECRET" ]; then
   echo "usage: curl -fsSL $RELAY/install | sh -s -- <secret> [your-name]" >&2
   exit 1
 fi
@@ -43,7 +49,11 @@ if [ -z "$NAME" ]; then
   done
   [ -n "$NAME" ] || NAME="member-$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')"
 fi
-node "$APP/bin/chamber.mjs" join "$RELAY/#$SECRET" --as "$NAME"
+if [ "$MODE" = "new" ]; then
+  node "$APP/bin/chamber.mjs" new --relay "$RELAY" --as "$NAME" || exit 1
+else
+  node "$APP/bin/chamber.mjs" join "$RELAY/#$SECRET" --as "$NAME"
+fi
 if PROJECT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
   node "$APP/bin/chamber.mjs" setup "$PROJECT"
 else
