@@ -51,6 +51,8 @@ export function install(url) {
     const mode = url.pathname === "/new" ? "new" : "join";
     return text(script.replaceAll("__RELAY__", url.origin).replace("__FILES__", Object.keys(FILES).join(" ")).replace("__MODE__", mode));
   }
+  // `chamber start` updates an installed client from this list.
+  if (url.pathname === "/client/files") return text(Object.keys(FILES).join("\n"));
   const file = url.pathname.startsWith("/client/") ? FILES[url.pathname.slice("/client/".length)] : undefined;
   return file === undefined ? null : text(file);
 }

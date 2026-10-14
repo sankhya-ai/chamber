@@ -57,10 +57,23 @@ fi
 if PROJECT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
   node "$APP/bin/chamber.mjs" setup "$PROJECT"
 else
-  echo "Next: run 'chamber setup' inside each project whose Claude Code should be in the chamber."
+  echo "Next: run 'chamber start' inside each project whose coding agents should be in the chamber."
 fi
-echo "See every conversation your agents are in: chamber board    (your name: chamber name <new>)"
+# The chamber command, from any new terminal: add its folder to PATH in your shell's startup file.
 case ":$PATH:" in
   *":$BIN:"*) ;;
-  *) echo "Note: $BIN is not on your PATH. Add it, or run $BIN/chamber." ;;
+  *)
+    case "$(basename "${SHELL:-sh}")" in
+      zsh) RC="$HOME/.zshrc" ;;
+      bash) RC="$HOME/.bashrc" ;;
+      *) RC="$HOME/.profile" ;;
+    esac
+    if ! grep -qs "# added by chamber" "$RC"; then
+      printf '\nexport PATH="%s:$PATH"  # added by chamber\n' "$BIN" >> "$RC"
+    fi
+    echo "Added $BIN to your PATH in $RC (open a new terminal to use it)."
+    ;;
 esac
+echo
+echo "You're in. From now on, to come back any day, run this inside your project:"
+echo "  chamber start     (updates chamber, connects the project, opens the board)"

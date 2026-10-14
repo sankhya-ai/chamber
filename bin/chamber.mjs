@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // chamber — your coding agents and your teammates' agents, talking over a tiny relay.
 //
+//   chamber start                   back in the chamber, any day: updates chamber, connects the project
+//                                   you are in, and opens the board (--no-board, --no-update)
 //   chamber board                   open the board: every conversation your agents are in
 //   chamber invite                  (admin) a personal join command for one teammate
 //   chamber members                 who is in the chamber
@@ -20,13 +22,14 @@
 //
 // Internal (called by Claude Code): `mcp`, `hook`, `wait` with --agent <name>.
 
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { LineClient } from "../lib/client.mjs";
-import { Inbox, isAdmin, loadConfig, markAdmin, NOT_A_NAME, rename, saveConfig } from "../lib/inbox.mjs";
+import { HOME, Inbox, isAdmin, loadConfig, markAdmin, NOT_A_NAME, rename, saveConfig } from "../lib/inbox.mjs";
 import { Invite, LineError } from "../lib/protocol.mjs";
 
 const [command, ...rest] = process.argv.slice(2);
@@ -46,6 +49,8 @@ const { values: opts, positionals } = parseArgs({
     "reply-to": { type: "string" },
     port: { type: "string" },
     "no-open": { type: "boolean" },
+    "no-board": { type: "boolean" },
+    "no-update": { type: "boolean" },
     format: { type: "string" },
     event: { type: "string" },
     harness: { type: "string" },
@@ -76,6 +81,51 @@ function installCommand(invite) {
   return `curl -fsSL ${invite.relay}/install | sh -s -- ${invite.secret}`;
 }
 
+const APP = resolve(fileURLToPath(import.meta.url), "../..");
+
+/**
+ * Bring the installed client up to what the relay serves (it bundles the client it was deployed
+ * with). Returns the files that changed, or null when there is nothing to update from: a
+ * checkout of the repository (git pull updates that) or a relay too old to list its files.
+ */
+async function update(relay) {
+  let installed = null;
+  try {
+    installed = realpathSync(join(HOME, "app"));
+  } catch {}
+  if (realpathSync(APP) !== installed) return null;
+  const list = await fetch(`${relay}/client/files`).catch(() => null);
+  if (!list?.ok) return null;
+  const files = (await list.text()).split("\n").filter((f) => f && !f.startsWith("/") && !f.split("/").includes(".."));
+  const fresh = await Promise.all(
+    files.map(async (file) => {
+      const response = await fetch(`${relay}/client/${file}`);
+      if (!response.ok) throw new LineError(`could not update ${file}: the relay answered ${response.status}`);
+      return [file, await response.text()];
+    }),
+  );
+  const changed = fresh.filter(([file, text]) => {
+    try {
+      return readFileSync(join(APP, file), "utf8") !== text;
+    } catch {
+      return true;
+    }
+  });
+  for (const [file, text] of changed) {
+    mkdirSync(dirname(join(APP, file)), { recursive: true });
+    writeFileSync(join(APP, file), text);
+  }
+  return changed.map(([file]) => file);
+}
+
+function gitTop() {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   switch (command) {
     case "new": {
@@ -97,6 +147,33 @@ async function main() {
         console.log(`\n${basename(resolve("."))}: in the chamber now: ${project.harnesses.map((h) => h.agent).join(", ")}. Restart them here to connect.`);
       }
       return 0;
+    }
+    case "start": {
+      // Rejoining is this, not the install command again: your key and name are kept in
+      // ~/.chamber, so all that can be stale is the client, the project's setup, and the board.
+      const config = needConfig();
+      if (!opts["no-update"]) {
+        const changed = await update(config.invite.relay);
+        if (changed?.length) {
+          console.log(`Updated chamber (${changed.length} file${changed.length === 1 ? "" : "s"}).`);
+          // The rest runs on the new code.
+          const again = spawnSync(process.execPath, [join(APP, "bin", "chamber.mjs"), "start", "--no-update", ...rest], { stdio: "inherit" });
+          return again.status ?? 1;
+        }
+      }
+      console.log(`You are ${config.owner} on ${config.invite.relay}.`);
+      const project = positionals[0] ? resolve(positionals[0]) : gitTop();
+      if (project) {
+        const { setup } = await import("../lib/setup.mjs");
+        const register = !opts["no-register"] && !process.env.CHAMBER_NO_REGISTER;
+        const result = setup(project, { register });
+        console.log(`${basename(project)}: ${result.harnesses.map((h) => h.agent).join(", ")} connected. Start them there (restart any already open).`);
+      } else {
+        console.log("Not inside a project: run chamber start in one to connect its coding agents.");
+      }
+      if (opts["no-board"]) return 0;
+      const { serveBoard } = await import("../lib/server.mjs");
+      return serveBoard(config, { port: Number(opts.port || 7878), open: !opts["no-open"] });
     }
     case "join": {
       if (!positionals[0]) throw new LineError("chamber join <invite> [--as <name>]");
@@ -238,7 +315,7 @@ async function main() {
       return wait(opts.agent || "claude-code");
     }
     default:
-      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 20).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 22).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
       return command ? 1 : 0;
   }
 }

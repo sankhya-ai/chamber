@@ -245,6 +245,31 @@ test("one command: the relay serves the installer, which installs, joins and set
   });
   assert.equal(status.code, 1);
   assert.match(status.out, /only your chamber's admin invites people/);
+  assert.match(result.out, /chamber start/, "the installer says how to come back");
+
+  // The next day: the relay has a newer client, and Nitin works in another project.
+  // `chamber start` (not the install command) updates, connects that project, keeps his key and name.
+  writeFileSync(join(lineHome, "app", "lib", "protocol.mjs"), "// yesterday's client\n" + readFileSync(join(ROOT, "lib", "protocol.mjs"), "utf8"));
+  const other = tmp("nitins-web");
+  await new Promise((done) => spawn("git", ["init", "-q"], { cwd: other }).on("close", done));
+  const start = (args) =>
+    new Promise((done) => {
+      const child = spawn(join(bin, "chamber"), ["start", "--no-board", ...args], { cwd: other, env: { ...process.env, HOME: home, CHAMBER_HOME: lineHome, CHAMBER_NO_REGISTER: "1", CHAMBER_HARNESSES: "claude" } });
+      children.add(child);
+      let out = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (out += d));
+      child.on("close", (code) => done({ code, out }));
+    });
+  const again = await start([]);
+  assert.equal(again.code, 0, again.out);
+  assert.match(again.out, /Updated chamber \(1 file\)/);
+  assert.match(again.out, /You are nitin on /);
+  assert.match(again.out, /claude-code\.chamber-nitins-web\S* connected/);
+  assert.equal(readFileSync(join(lineHome, "app", "lib", "protocol.mjs"), "utf8"), readFileSync(join(ROOT, "lib", "protocol.mjs"), "utf8"));
+  assert.ok(existsSync(join(other, ".claude", "settings.local.json")));
+  assert.equal(JSON.parse(readFileSync(join(lineHome, "config.json"), "utf8")).invite, String(invite));
+  assert.doesNotMatch((await start([])).out, /Updated/, "nothing to update the second time");
 });
 
 test("board: messages become conversations that say where they stand", async () => {
