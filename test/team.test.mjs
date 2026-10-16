@@ -120,6 +120,13 @@ test("a team's day: channels, mentions, DMs, threads, a burst, offline people, s
   assert.equal(reply.thread, asked.thread, "the reply stays in the conversation");
   assert.ok(!texts(ashish.code).includes("On it, PR by tonight."), "the reply goes to the asking agent, not his other one");
 
+  // 4b. A message to someone's board (a reply in a talk their board started) is for that
+  // person: their chosen agent answers it, and the board keeps its copy.
+  const toBoard = await nitin.codex.send("ashish/board", "Review the onboarding brief?", { title: "Onboarding" });
+  await settle();
+  assert.ok(ashish.code.got.some((m) => m.id === toBoard.id), "ashish's chosen agent gets a message sent to his board");
+  assert.ok(texts(ashish.board).includes("Review the onboarding brief?"), "and his board still shows it");
+
   // 5. Addressing one specific agent.
   await rohan.board.send("nitin/codex.web", "Your Codex: please rebase the web branch.");
   await settle();
