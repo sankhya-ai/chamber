@@ -1,4 +1,4 @@
-import { BookOpen, Check, Folder, Hash, Inbox, Layers, Moon, Plus, Search, Sun, UserPlus, Users, X } from "lucide-react";
+import { BookOpen, Bot, Check, Folder, Hash, Inbox, Layers, Moon, Plus, Search, Shield, Sun, UserPlus, Users, X } from "lucide-react";
 import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
@@ -11,11 +11,16 @@ interface Props {
   data: BoardData | null;
   view: View;
   dark: boolean;
+  pendingGatesCount?: number;
+  awayActive?: boolean;
+  awayStatusText?: string;
   onView: (view: View) => void;
   onSearch: () => void;
   onNewChannel: () => void;
   onInvite: () => void;
   onMembers: () => void;
+  onGates?: () => void;
+  onAway?: () => void;
   onTheme: () => void;
   onChanged: () => void;
 }
@@ -63,8 +68,24 @@ function IconButton({ label, onClick, children }: { label: string; onClick: (e: 
   );
 }
 
-/** Slack's sidebar: inbox, channels, people, your agents. */
-export function Sidebar({ data, view, dark, onView, onSearch, onNewChannel, onInvite, onMembers, onTheme, onChanged }: Props) {
+/** Slack's sidebar: inbox, channels, people, approval gates, your agents. */
+export function Sidebar({
+  data,
+  view,
+  dark,
+  pendingGatesCount = 0,
+  awayActive = false,
+  awayStatusText = "",
+  onView,
+  onSearch,
+  onNewChannel,
+  onInvite,
+  onMembers,
+  onGates,
+  onAway,
+  onTheme,
+  onChanged,
+}: Props) {
   const [naming, setNaming] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const me = data?.me ?? "";
@@ -100,7 +121,7 @@ export function Sidebar({ data, view, dark, onView, onSearch, onNewChannel, onIn
 
       <button onClick={onSearch} className="mx-1 mb-2 flex h-7 items-center gap-2 rounded-md border bg-background/60 px-2 text-muted-foreground hover:text-foreground">
         <Search className="size-3.5" />
-        <span className="flex-1 text-left">Search</span>
+        <span className="flex-1 text-left text-xs">Search</span>
         <kbd className="text-[11px]">⌘K</kbd>
       </button>
 
@@ -111,8 +132,21 @@ export function Sidebar({ data, view, dark, onView, onSearch, onNewChannel, onIn
         <Row active={same(view, { kind: "all" })} onClick={() => onView({ kind: "all" })}>
           <Layers className="size-4" /> All talks
         </Row>
+        <Row
+          active={false}
+          onClick={() => onGates?.()}
+          end={
+            pendingGatesCount > 0 ? (
+              <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">
+                {pendingGatesCount}
+              </span>
+            ) : null
+          }
+        >
+          <Shield className="size-4 text-amber-500" /> Approval Gates
+        </Row>
         <Row active={same(view, { kind: "memory" })} onClick={() => onView({ kind: "memory" })}>
-          <BookOpen className="size-4" /> Memory
+          <BookOpen className="size-4" /> Team Memory
         </Row>
 
         <Section title="Channels" action={<IconButton label="New or join a channel" onClick={onNewChannel}><Plus className="size-3.5" /></IconButton>}>
@@ -138,7 +172,22 @@ export function Sidebar({ data, view, dark, onView, onSearch, onNewChannel, onIn
           {people(data).length === 0 ? <p className="px-2 text-muted-foreground">Nobody yet. Invite someone.</p> : null}
         </Section>
 
-        <Section title="Projects" action={<IconButton label="Add a project folder" onClick={() => void addProject()}><Plus className="size-3.5" /></IconButton>}>
+        <Section title="Agents & Workspaces" action={<IconButton label="Add a project folder" onClick={() => void addProject()}><Plus className="size-3.5" /></IconButton>}>
+          {awayActive ? (
+            <Row
+              active={false}
+              onClick={() => onAway?.()}
+              end={
+                <span className="rounded bg-amber-500/15 px-1 text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                  auto-reply
+                </span>
+              }
+            >
+              <Bot className="size-3.5 text-amber-500 shrink-0" />
+              <span className="truncate">@{me}/away</span>
+            </Row>
+          ) : null}
+
           {(data?.projects ?? []).map((p) => {
             const v: View = p.path ? { kind: "project", path: p.path } : { kind: "agent", agent: p.agents[0].agent };
             const online = p.agents.some((a) => a.online);
@@ -165,7 +214,7 @@ export function Sidebar({ data, view, dark, onView, onSearch, onNewChannel, onIn
               </Row>
             );
           })}
-          {!(data?.projects ?? []).length ? <p className="px-2 text-muted-foreground">Add a project folder to put its coding agents in the chamber.</p> : null}
+          {!(data?.projects ?? []).length && !awayActive ? <p className="px-2 text-muted-foreground">Add a project folder to put its coding agents in the chamber.</p> : null}
         </Section>
       </nav>
 
@@ -175,14 +224,29 @@ export function Sidebar({ data, view, dark, onView, onSearch, onNewChannel, onIn
         {naming === null ? (
           <button onClick={() => setNaming(me)} title="Your name: teammates reach you as @name. Click to change." className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-accent">
             <Avatar name={me || "?"} size={20} />
-            <span className="truncate">@{me}</span>
+            <span className="truncate text-xs">@{me}</span>
           </button>
         ) : (
           <form className="flex flex-1 items-center gap-1" onSubmit={(e) => (e.preventDefault(), void act(() => api.setName(naming), `You are @${naming.toLowerCase()} now.`).then(() => setNaming(null)))}>
-            <input autoFocus value={naming} onChange={(e) => setNaming(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setNaming(null)} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 outline-none focus:border-ring" />
+            <input autoFocus value={naming} onChange={(e) => setNaming(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setNaming(null)} className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 outline-none focus:border-ring text-xs" />
             <IconButton label="Save" onClick={() => undefined}><Check className="size-3.5" /></IconButton>
           </form>
         )}
+
+        <button
+          onClick={onAway}
+          title={awayActive ? `Away responder active: ${awayStatusText}` : "Click to enable Away Mode"}
+          className={cn(
+            "flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium border transition-colors",
+            awayActive
+              ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+              : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground"
+          )}
+        >
+          <span className={cn("size-2 rounded-full", awayActive ? "bg-amber-500 animate-pulse" : "bg-emerald-500")} />
+          <span>{awayActive ? "Away" : "Active"}</span>
+        </button>
+
         {data?.admin ? <IconButton label="Invite a teammate" onClick={onInvite}><UserPlus className="size-4" /></IconButton> : null}
         <IconButton label="Members" onClick={onMembers}><Users className="size-4" /></IconButton>
         <IconButton label={dark ? "Light mode" : "Dark mode"} onClick={onTheme}>{dark ? <Sun className="size-4" /> : <Moon className="size-4" />}</IconButton>

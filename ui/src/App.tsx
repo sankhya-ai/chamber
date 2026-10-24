@@ -1,11 +1,14 @@
-import { LayoutGrid, List, Plus, Users } from "lucide-react";
+import { LayoutGrid, List, Plus, Shield, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { AwayDialog } from "@/components/AwayDialog";
 import { CommandMenu } from "@/components/CommandMenu";
 import { Composer } from "@/components/Composer";
 import { Conversation } from "@/components/Conversation";
 import { ChannelDialog, ChannelMembersDialog, InviteDialog, MembersDialog } from "@/components/Dialogs";
+import { GatesDialog } from "@/components/GatesDialog";
 import { MemoryView } from "@/components/MemoryView";
+import { SearchBar } from "@/components/SearchBar";
 import { Sidebar } from "@/components/Sidebar";
 import { TalkList } from "@/components/TalkList";
 import { Button } from "@/components/ui/button";
@@ -55,6 +58,11 @@ export function App() {
   const [invite, setInvite] = useState(false);
   const [members, setMembers] = useState(false);
   const [channelPeople, setChannelPeople] = useState(false);
+  const [gatesOpen, setGatesOpen] = useState(false);
+  const [awayOpen, setAwayOpen] = useState(false);
+  const [pendingGatesCount, setPendingGatesCount] = useState(0);
+  const [awayRunning, setAwayRunning] = useState(false);
+  const [awayStatusText, setAwayStatusText] = useState("");
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -65,6 +73,17 @@ export function App() {
     api.board().then(
       (d) => (setData(d), setError("")),
       (e) => setError(e instanceof TypeError ? "The board is not running: start it with `chamber board`." : String(e.message)),
+    );
+    api.gates().then(
+      (res) => setPendingGatesCount((res.gates || []).filter((g) => g.status === "pending").length),
+      () => undefined
+    );
+    api.awayStatus().then(
+      (res) => {
+        setAwayRunning(Boolean(res.running));
+        if (res.status) setAwayStatusText(res.status);
+      },
+      () => undefined
     );
   }, []);
 
@@ -132,11 +151,16 @@ export function App() {
           data={data}
           view={route.view}
           dark={dark}
+          pendingGatesCount={pendingGatesCount}
+          awayActive={awayRunning}
+          awayStatusText={awayStatusText}
           onView={openView}
           onSearch={() => setMenu(true)}
           onNewChannel={() => setChannels(true)}
           onInvite={() => setInvite(true)}
           onMembers={() => setMembers(true)}
+          onGates={() => setGatesOpen(true)}
+          onAway={() => setAwayOpen(true)}
           onTheme={() => setDark((v) => !v)}
           onChanged={refresh}
         />
@@ -152,7 +176,35 @@ export function App() {
                 </button>
               ) : null}
               {error ? <span className="truncate text-[12px] text-destructive">{error}</span> : null}
-              <div className={cn("ml-auto flex items-center gap-1", route.view.kind === "memory" && "hidden")}>
+
+              <div className="ml-auto flex items-center gap-2">
+                <SearchBar onOpenTalk={(id) => go({ view: { kind: "all" }, talk: id })} />
+
+                {pendingGatesCount > 0 ? (
+                  <button
+                    onClick={() => setGatesOpen(true)}
+                    className="flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-600 dark:text-amber-400 hover:bg-amber-500/20"
+                    title="Review pending approval gates"
+                  >
+                    <Shield className="size-3.5 text-amber-500" />
+                    <span>{pendingGatesCount} Gate{pendingGatesCount === 1 ? "" : "s"}</span>
+                  </button>
+                ) : null}
+
+                <button
+                  onClick={() => setAwayOpen(true)}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-colors",
+                    awayRunning
+                      ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                      : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground"
+                  )}
+                  title={awayRunning ? `Away mode: ${awayStatusText}` : "Click to set Away Mode"}
+                >
+                  <span className={cn("size-2 rounded-full", awayRunning ? "bg-amber-500 animate-pulse" : "bg-emerald-500")} />
+                  <span>{awayRunning ? "Away" : "Active"}</span>
+                </button>
+
                 <div className={cn("flex rounded-md border p-0.5", route.view.kind !== "all" && "hidden")}>
                   {(["list", "board"] as const).map((l) => (
                     <button
@@ -168,6 +220,7 @@ export function App() {
                     </button>
                   ))}
                 </div>
+
                 <Button size="sm" onClick={() => openTalk("new")}>
                   <Plus /> New talk
                 </Button>
@@ -242,6 +295,8 @@ export function App() {
         />
       ) : null}
       <MembersDialog open={members} onOpenChange={setMembers} admin={data?.admin ?? false} me={me} data={data} onChanged={refresh} />
+      <GatesDialog open={gatesOpen} onOpenChange={setGatesOpen} onChanged={refresh} />
+      <AwayDialog open={awayOpen} onOpenChange={setAwayOpen} me={me} onChanged={refresh} />
     </TooltipProvider>
   );
 }

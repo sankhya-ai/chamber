@@ -43,6 +43,8 @@ export const api = {
   invite: () => request<{ command: string }>("/api/board/invite"),
   memory: () => request<{ files: { path: string; version: number; author: string; ts: number }[] }>("/api/board/memory"),
   memoryFile: (path: string, version = 0) => request<{ path: string; version: number; text: string | null }>(`/api/board/memory/file?path=${encodeURIComponent(path)}${version ? `&version=${version}` : ""}`),
+  saveMemoryFile: (path: string, text: string, message?: string, base?: number) =>
+    post<{ ok: boolean; seq?: number; current?: unknown }>("/api/board/memory/file", { path, text, message, base }),
   memoryHistory: () => request<{ commits: { seq: number; author: string; message: string; ts: number; changes: { path: string; from: number; to: number; deleted: boolean }[] }[] }>("/api/board/memory/history"),
   memorySearch: (q: string) => request<{ hits: { path: string; line: number; text: string }[] }>(`/api/board/memory/search?q=${encodeURIComponent(q)}`),
   dreams: () => request<{ dreams: Dream[]; running: { started: number; log: { kind: string; text: string; ts: number }[] } | null }>("/api/board/memory/dreams"),
@@ -52,4 +54,40 @@ export const api = {
   members: () => request<{ personal: boolean; members: { owner: string; online: boolean; since: number }[]; removed?: { owner: string; at: number }[] }>("/api/board/members"),
   revoke: (owner: string, op: "revoke" | "restore" = "revoke") => post<{ ok: boolean }>("/api/board/revoke", { owner, op }),
   setName: (name: string) => post<{ name: string }>("/api/board/name", { name }),
+  search: (q: string, channel = "", type = "") =>
+    request<{ hits: SearchHit[] }>(`/api/board/search?q=${encodeURIComponent(q)}${channel ? `&channel=${encodeURIComponent(channel)}` : ""}${type ? `&type=${encodeURIComponent(type)}` : ""}`),
+  gates: () => request<{ gates: Gate[] }>("/api/board/gates"),
+  resolveGate: (gateId: string, decision: "approve" | "reject", token?: string) =>
+    post<{ gate: Gate }>("/api/board/gates", { gateId, decision, token }),
+  awayStatus: () => request<{ running: boolean; status: string }>("/api/board/away"),
+  setAway: (enabled: boolean, status?: string) => post<{ running: boolean; status: string }>("/api/board/away", { enabled, status }),
+  reviewPatch: (patch: string, workspacePath?: string) =>
+    post<{ appliesCleanly: boolean; stat: string; error?: string | null }>("/api/board/review_patch", { patch, workspacePath }),
 };
+
+export interface SearchHit {
+  id: string;
+  talkId: string;
+  messageId: string;
+  sender: string;
+  channel: string;
+  type: string;
+  title: string;
+  text: string;
+  createdAt: string;
+  score: number;
+  citation: string;
+}
+
+export interface Gate {
+  id: string;
+  token?: string;
+  description: string;
+  action: string;
+  requestedBy: string;
+  status: "pending" | "approved" | "rejected" | "expired";
+  createdAt: number;
+  expiresAt: number;
+  resolvedAt?: number;
+  resolvedBy?: string;
+}

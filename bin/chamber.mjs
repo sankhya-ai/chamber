@@ -13,6 +13,11 @@
 //                                   Antigravity, and your DeepSeek Harness (--harness codex,… to choose)
 //   chamber status                  who is in the chamber
 //   chamber send <to> <text>        send from the terminal (--file path, --reply-to <id> to answer)
+//   chamber search <query>          search talks, memory, contracts, incidents (--channel, --type)
+//   chamber away [--status text]    autonomous away responder when you are in meetings
+//   chamber runner                  headless workflow and gate runner daemon
+//   chamber workflow sign <file>    (admin) cryptographically sign a workflow file
+//   chamber gate [list|approve|reject] manage approval gates
 //   chamber listen                  wait for the next message to you and print it (--timeout seconds)
 //   chamber remove                  take this project's Claude Code out of the chamber
 //   chamber name [new]              your name in the chamber (teammates reach you as @name)
@@ -55,6 +60,10 @@ const { values: opts, positionals } = parseArgs({
     event: { type: "string" },
     harness: { type: "string" },
     timeout: { type: "string" },
+    channel: { type: "string" },
+    type: { type: "string" },
+    status: { type: "string" },
+    token: { type: "string" },
   },
 });
 
@@ -146,6 +155,10 @@ async function main() {
         const project = setup(".", { register });
         console.log(`\n${basename(resolve("."))}: in the chamber now: ${project.harnesses.map((h) => h.agent).join(", ")}. Restart them here to connect.`);
       }
+      try {
+        const { installDefaultWorkflows } = await import("../lib/runner.mjs");
+        await installDefaultWorkflows(resolve(".chamber", "workflows"), claimed.key?.private || null);
+      } catch {}
       return 0;
     }
     case "start": {
@@ -268,8 +281,9 @@ async function main() {
       if (opts["reply-to"] && !original) throw new LineError(`no message ${opts["reply-to"]} in this agent's inbox`);
       const title = original ? original.title : text.split("\n")[0].slice(0, 80);
       const thread = original ? original.thread || original.id : null;
-      const receipt = await client.send(to, text, { files, title, thread, replyTo: original?.id ?? null });
-      inbox.sent(receipt, { to, text, title, files, replyTo: original?.id ?? null });
+      const branch = opts.branch || null;
+      const receipt = await client.send(to, text, { files, title, thread, replyTo: original?.id ?? null, branch });
+      inbox.sent(receipt, { to, text, title, files, replyTo: original?.id ?? null, branch });
       console.log(receipt.held ? `Held for ${to} until they come online.` : `Delivered to ${receipt.delivered.join(", ")}.`);
       client.close();
       return 0;
@@ -314,8 +328,125 @@ async function main() {
       const { wait } = await import("../lib/hooks.mjs");
       return wait(opts.agent || "claude-code");
     }
+    case "sync": {
+      const config = needConfig();
+      const client = new LineClient(config.invite, `${config.owner}/sync`);
+      const { ChamberSearch } = await import("../lib/search.mjs");
+      const search = new ChamberSearch(config.owner);
+      let count = 0;
+      let since = 0;
+      process.stdout.write("Syncing sealed history from relay...");
+      while (true) {
+        const { messages, hasMore } = await client.syncHistory({
+          since,
+          limit: 200,
+          onMessage: async (m) => {
+            count++;
+            since = Math.max(since, m.seq || 0);
+            await search.index({
+              id: m.id,
+              talkId: m.thread || m.id,
+              messageId: m.id,
+              sender: m.from,
+              channel: String(m.to || "").startsWith("#") ? m.to : "",
+              type: m.type,
+              title: m.title,
+              text: `${m.title ? m.title + "\n" : ""}${m.text}${m.patch ? "\n" + m.patch : ""}`,
+              createdAt: new Date(m.ts).toISOString(),
+            });
+          },
+        });
+        if (!hasMore || !messages.length) break;
+      }
+      search.close();
+      client.close();
+      console.log(`\n✔ Synced ${count} historical talks and messages. Local search index updated.`);
+      return 0;
+    }
+    case "search": {
+      const { owner } = needConfig();
+      const query = positionals.join(" ").trim();
+      if (!query) throw new LineError("chamber search <query> [--channel #name] [--type patch|incident|decision]");
+      const { ChamberSearch } = await import("../lib/search.mjs");
+      const search = new ChamberSearch(owner);
+      const results = await search.search({
+        query,
+        channel: opts.channel || "",
+        type: opts.type || "",
+        limit: 15,
+      });
+      search.close();
+      if (!results.length) {
+        console.log("No matching talks or records found.");
+        return 0;
+      }
+      for (const r of results) {
+        console.log(`\x1b[1m[${r.citation}]\x1b[0m (${r.type}${r.channel ? ` in ${r.channel}` : ""}) ${r.sender ? `by ${r.sender}` : ""}`);
+        if (r.title) console.log(`  Title: ${r.title}`);
+        console.log(`  ${r.text.replace(/\n+/g, " ").slice(0, 160)}...\n`);
+      }
+      return 0;
+    }
+    case "away": {
+      const config = needConfig();
+      const { AwayResponder } = await import("../lib/away.mjs");
+      const responder = new AwayResponder(config, { statusMessage: opts.status || "away in a meeting" });
+      await responder.start();
+      console.log(`Away responder active for ${config.owner}. Press Ctrl+C to stop.`);
+      await new Promise(() => {}); // keep running
+      return 0;
+    }
+    case "runner": {
+      const config = needConfig();
+      const { ChamberRunner } = await import("../lib/runner.mjs");
+      const runner = new ChamberRunner(config);
+      await runner.start();
+      console.log(`Headless runner active for ${config.owner}. Watching signed workflows and approval gates...`);
+      await new Promise(() => {}); // keep running
+      return 0;
+    }
+    case "workflow": {
+      const [op, file] = positionals;
+      if (op === "sign") {
+        if (!file) throw new LineError("chamber workflow sign <file.yaml>");
+        const state = adminState();
+        if (!state?.secret) throw new LineError("only the chamber admin can sign workflows (admin key not found in relay.json)");
+        const { signWorkflow } = await import("../lib/runner.mjs");
+        const content = readFileSync(file, "utf8");
+        const signed = await signWorkflow(content, state.secret);
+        writeFileSync(file, signed);
+        console.log(`✔ Signed ${file} with admin key.`);
+        return 0;
+      }
+      throw new LineError("chamber workflow sign <file.yaml>");
+    }
+    case "gate": {
+      const { owner, invite } = needConfig();
+      const [op, gateId] = positionals;
+      const { ApprovalGateManager } = await import("../lib/runner.mjs");
+      const mgr = new ApprovalGateManager(join(HOME, owner));
+      if (!op || op === "list") {
+        const pending = mgr.listPending();
+        if (!pending.length) {
+          console.log("No pending approval gates.");
+          return 0;
+        }
+        for (const g of pending) {
+          console.log(`- Gate: \x1b[1m${g.id}\x1b[0m: ${g.description} (requested by: ${g.requestedBy})`);
+          if (g.mobileUrl) console.log(`  Mobile approval link: ${g.mobileUrl}`);
+        }
+        return 0;
+      }
+      if (op === "approve" || op === "reject") {
+        if (!gateId) throw new LineError(`chamber gate ${op} <gate_id> [--token <tok>]`);
+        const res = mgr.resolveGate(gateId, op, { token: opts.token || null, approver: owner, relayUrl: invite?.relay || null });
+        console.log(`✔ Gate ${gateId} ${res.status}.`);
+        return 0;
+      }
+      throw new LineError("chamber gate [list | approve <id> | reject <id>]");
+    }
     default:
-      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 22).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
+      console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1, 28).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
       return command ? 1 : 0;
   }
 }

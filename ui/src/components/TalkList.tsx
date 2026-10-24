@@ -1,4 +1,4 @@
-import { Circle, CircleDot } from "lucide-react";
+import { Circle, CircleDot, GitBranch } from "lucide-react";
 
 import { Avatar } from "@/components/Avatar";
 import { ago, personOf, STATUSES, who, type Card, type Status } from "@/lib/board";
@@ -28,6 +28,11 @@ function Row({ card, me, open, onOpen }: { card: Card; me: string; open: boolean
     >
       {ICON[card.status]}
       <span className={cn("min-w-0 flex-1 truncate", card.unread ? "font-semibold" : "text-muted-foreground")}>{card.title}</span>
+      {card.branch ? (
+        <span className="inline-flex shrink-0 items-center gap-1 rounded bg-accent/80 px-1.5 py-0.5 text-[10px] font-mono text-accent-foreground">
+          <GitBranch className="size-2.5" /> {card.branch}
+        </span>
+      ) : null}
       {card.channel ? <span className="text-muted-foreground">{card.channel}</span> : null}
       <People card={card} me={me} />
       <span className="w-8 text-right text-muted-foreground tabular-nums">{card.count}</span>
@@ -43,6 +48,11 @@ function Tile({ card, me, open, onOpen }: { card: Card; me: string; open: boolea
         <span className="mt-0.5">{ICON[card.status]}</span>
         <span className="line-clamp-2">{card.title}</span>
       </span>
+      {card.branch ? (
+        <span className="inline-flex w-fit items-center gap-1 rounded bg-accent/80 px-1.5 py-0.5 text-[10px] font-mono text-accent-foreground">
+          <GitBranch className="size-2.5" /> {card.branch}
+        </span>
+      ) : null}
       <span className="flex items-center gap-2 text-muted-foreground">
         <People card={card} me={me} />
         {card.channel ? <span>{card.channel}</span> : null}
@@ -67,6 +77,11 @@ function Inbox({ cards, me, open, onOpen }: { cards: Card[]; me: string; open: s
               <span className={c.unread ? "font-semibold text-foreground" : ""}>{c.title}</span>
               <span className="text-muted-foreground"> — {c.last.text}</span>
             </span>
+            {c.branch ? (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded bg-accent/80 px-1.5 py-0.5 text-[10px] font-mono text-accent-foreground">
+                <GitBranch className="size-2.5" /> {c.branch}
+              </span>
+            ) : null}
             {c.channel ? <span className="shrink-0 text-muted-foreground">{c.channel}</span> : null}
             <span className={cn("w-10 shrink-0 text-right text-[12px]", c.unread ? "font-semibold text-foreground" : "text-muted-foreground")}>{ago(c.updated)}</span>
           </button>

@@ -32,6 +32,7 @@ before(async () => {
     });
   });
   relayProcess = spawn(WRANGLER, ["dev", "--local", "--ip", "127.0.0.1", "--port", String(port), "--persist-to", tmp("relay")], { cwd: join(ROOT, "relay"), stdio: "ignore", detached: true });
+  relayProcess.unref();
   relay = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 120; i++) {
     try {
@@ -43,8 +44,10 @@ before(async () => {
 });
 
 after(() => {
-  for (const c of clients) c.close();
-  process.kill(-relayProcess.pid, "SIGTERM");
+  for (const c of clients) {
+    try { c.close(); } catch {}
+  }
+  try { process.kill(-relayProcess.pid, "SIGKILL"); } catch {}
 });
 
 /** A connected agent that records everything it receives. */

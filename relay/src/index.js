@@ -41,9 +41,9 @@
 import { install } from "./install.js";
 
 /** Bumped when the relay changes, so a client can tell which code answered. */
-const RELAY_VERSION = 4;
-const RETENTION_MS = 7 * 24 * 3600 * 1000;
-const MAX_ROWS = 5000;
+const RELAY_VERSION = 5;
+const RETENTION_MS = 30 * 24 * 3600 * 1000;
+const MAX_ROWS = 50000;
 const MAX_BODY = 900_000;
 const AGENT = /^[a-z0-9][a-z0-9._-]{0,31}\/[a-z0-9][a-z0-9._-]{0,31}$/;
 const LINE = /^[0-9a-f]{32}$/;
@@ -73,7 +73,14 @@ export default {
     if (url.pathname === "/v1/relay") return json({ claimed: (await relayConfig(env)).claimed, relay: RELAY_VERSION });
     const served = install(url);
     if (served) return served;
-    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|roster|members|admin|memory(?:\/(?:file|commit|history))?|restart|blobs\/([^/]+))$/);
+    const gateMatch = url.pathname.match(/^\/(?:v1\/)?gate\/([0-9a-f]{16,64})(?:\/([a-z0-9_-]+))?$/i);
+    if (gateMatch) {
+      const [, gateId, sub] = gateMatch;
+      const stub = env.LINES.get(env.LINES.idFromName("__chamber_relay_gates__"));
+      const forwarded = new Request(`https://line/gate/${gateId}${sub ? "/" + sub : ""}${url.search}`, request);
+      return stub.fetch(forwarded);
+    }
+    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|roster|members|admin|sync|memory(?:\/(?:file|commit|history))?|restart|blobs\/([^/]+))$/);
     if (!match) return json({ error: "not found" }, 404);
     const [, line, what, blob] = match;
     const token = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
@@ -197,6 +204,20 @@ export class Line {
     this.sql.exec("CREATE TABLE IF NOT EXISTS mem_files (path TEXT PRIMARY KEY, version INTEGER NOT NULL, body TEXT NOT NULL, author TEXT NOT NULL, ts INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS mem_versions (path TEXT NOT NULL, version INTEGER NOT NULL, body TEXT, PRIMARY KEY (path, version))");
     this.sql.exec("CREATE TABLE IF NOT EXISTS mem_commits (seq INTEGER PRIMARY KEY AUTOINCREMENT, author TEXT NOT NULL, message TEXT NOT NULL, changes TEXT NOT NULL, ts INTEGER NOT NULL)");
+    // Ephemeral remote approval gates
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS gates (
+      id TEXT PRIMARY KEY,
+      token TEXT NOT NULL,
+      line TEXT,
+      description TEXT,
+      action TEXT,
+      requestedBy TEXT,
+      status TEXT NOT NULL,
+      approver TEXT,
+      createdAt INTEGER NOT NULL,
+      expiresAt INTEGER NOT NULL,
+      resolvedAt INTEGER
+    )`);
   }
 
   // ----- channels ---------------------------------------------------------------
@@ -275,6 +296,17 @@ export class Line {
       return json({ personal: Boolean(await this.adminKey()), members: rows.map((r) => ({ ...r, online: online.has(r.owner) })), removed, relay: RELAY_VERSION });
     }
     if (what === "admin") return this.admin(await request.json().catch(() => ({})));
+    if (what === "sync") {
+      const since = Number(new URL(request.url).searchParams.get("since") || 0);
+      const limit = Math.min(500, Math.max(1, Number(new URL(request.url).searchParams.get("limit") || 100)));
+      const rows = this.sql.exec("SELECT * FROM messages WHERE seq > ? ORDER BY seq ASC LIMIT ?", since, limit).toArray();
+      const head = this.sql.exec("SELECT MAX(seq) AS max_seq FROM messages").one()?.max_seq ?? 0;
+      return json({
+        messages: rows.map((r) => this.envelope(r)),
+        head,
+        hasMore: rows.length === limit,
+      });
+    }
     if (what === "restart") {
       // After a deploy: a busy chamber keeps running the old code until it restarts. Its
       // clients reconnect at once and get the new code.
@@ -285,6 +317,9 @@ export class Line {
       const refused = await this.memberCheck(request.headers.get("x-chamber-pass"));
       if (refused) return json({ error: refused }, 403);
       return this.memory(what, request);
+    }
+    if (what.startsWith("gate/")) {
+      return this.handleGate(what, request);
     }
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
@@ -588,6 +623,112 @@ export class Line {
     };
   }
 
+  async handleGate(what, request) {
+    const parts = what.split("/").slice(1);
+    const gateId = parts[0];
+    const sub = parts[1] || "";
+    const url = new URL(request.url);
+    const token = url.searchParams.get("token") || request.headers.get("x-gate-token") || "";
+
+    // Registration: POST /v1/gate/:id or POST /gate/:id/register
+    if (request.method === "POST" && (sub === "register" || !sub && request.headers.get("content-type")?.includes("application/json"))) {
+      const body = await request.clone().json().catch(() => ({}));
+      if (body.action || body.description) {
+        const row = this.sql.exec("SELECT * FROM gates WHERE id = ?", gateId).one();
+        if (row && body.token && row.token !== body.token) return json({ error: "gate already exists" }, 409);
+        const expiresAt = body.expiresAt || (Date.now() + (Number(body.expiresMinutes) || 60) * 60 * 1000);
+        this.sql.exec(
+          `INSERT OR REPLACE INTO gates (id, token, line, description, action, requestedBy, status, createdAt, expiresAt)
+           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+          gateId,
+          body.token || token,
+          body.line || "",
+          body.description || "",
+          body.action || "action",
+          body.requestedBy || "agent",
+          Date.now(),
+          expiresAt
+        );
+        return json({ ok: true, id: gateId, status: "pending" });
+      }
+    }
+
+    let gate = this.sql.exec("SELECT * FROM gates WHERE id = ?", gateId).one();
+    if (!gate) {
+      if (request.headers.get("accept")?.includes("text/html")) {
+        return new Response(gateHtml({ id: gateId, status: "not_found" }), {
+          status: 404,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
+      }
+      return json({ error: "gate not found" }, 404);
+    }
+
+    let reqToken = token;
+    let decision = "";
+    let approver = "mobile-approver";
+
+    if (request.method === "POST") {
+      const contentType = request.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        const body = await request.json().catch(() => ({}));
+        decision = body.decision;
+        if (body.token) reqToken ||= body.token;
+        if (body.approver) approver = body.approver;
+      } else {
+        const text = await request.text();
+        const params = new URLSearchParams(text);
+        decision = params.get("decision") || "";
+        if (params.get("token")) reqToken ||= params.get("token");
+        if (params.get("approver")) approver = params.get("approver");
+      }
+    }
+
+    if (gate.token && reqToken !== gate.token) {
+      if (request.headers.get("accept")?.includes("text/html")) {
+        return new Response(gateHtml({ ...gate, error: "Invalid or missing approval token" }), {
+          status: 401,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
+      }
+      return json({ error: "unauthorized: invalid gate token" }, 401);
+    }
+
+    if (gate.status === "pending" && Date.now() > gate.expiresAt) {
+      this.sql.exec("UPDATE gates SET status = 'expired' WHERE id = ?", gateId);
+      gate.status = "expired";
+    }
+
+    if (request.method === "POST" && (decision === "approve" || decision === "reject")) {
+      if (gate.status === "pending") {
+        const newStatus = decision === "approve" ? "approved" : "rejected";
+        this.sql.exec(
+          "UPDATE gates SET status = ?, approver = ?, resolvedAt = ? WHERE id = ?",
+          newStatus,
+          approver,
+          Date.now(),
+          gateId
+        );
+        gate = this.sql.exec("SELECT * FROM gates WHERE id = ?", gateId).one();
+      }
+      if (request.headers.get("accept")?.includes("application/json") || url.searchParams.get("format") === "json") {
+        return json({ ok: true, gate });
+      }
+      return new Response(gateHtml({ ...gate, justResolved: true }), {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+
+    // GET status check or HTML
+    if (sub === "status" || request.headers.get("accept")?.includes("application/json") || url.searchParams.get("format") === "json") {
+      return json({ ok: true, gate });
+    }
+
+    return new Response(gateHtml(gate), {
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  }
+
   async webSocketClose(ws, code, reason) {
     try {
       ws.close(code === 1005 ? 1000 : code, reason); // finish the close handshake, or the client waits it out
@@ -624,4 +765,220 @@ export class Line {
       cursor = page.truncated ? page.cursor : undefined;
     } while (cursor);
   }
+}
+
+function gateHtml(gate) {
+  const isPending = gate.status === "pending";
+  const isApproved = gate.status === "approved";
+  const isRejected = gate.status === "rejected";
+  const isExpired = gate.status === "expired";
+  const isNotFound = gate.status === "not_found";
+
+  const statusColor = isApproved ? "#10b981" : isRejected ? "#f43f5e" : isPending ? "#f59e0b" : "#71717a";
+  const statusLabel = isApproved ? "Approved" : isRejected ? "Rejected" : isPending ? "Pending Review" : isExpired ? "Expired" : "Not Found";
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Approval Gate · chamber</title>
+  <style>
+    :root {
+      --bg: #09090b;
+      --card-bg: #18181b;
+      --border: #27272a;
+      --text: #f4f4f5;
+      --muted: #a1a1aa;
+      --accent: #eab308;
+      --approve: #10b981;
+      --approve-hover: #059669;
+      --reject: #ef4444;
+      --reject-hover: #dc2626;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #fafafa;
+        --card-bg: #ffffff;
+        --border: #e4e4e7;
+        --text: #09090b;
+        --muted: #71717a;
+        --accent: #ca8a04;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .container {
+      width: 100%;
+      max-width: 440px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .logo {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    .logo span { color: var(--accent); }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: ${statusColor}18;
+      color: ${statusColor};
+      border: 1px solid ${statusColor}33;
+    }
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: ${statusColor};
+    }
+    .meta-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 20px;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+    .row:last-child { margin-bottom: 0; }
+    .label { color: var(--muted); }
+    .val { font-weight: 500; font-family: monospace; }
+    .desc-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+    .desc-text {
+      font-size: 14px;
+      line-height: 1.5;
+      margin-bottom: 24px;
+    }
+    .actions {
+      display: flex;
+      gap: 12px;
+    }
+    .btn {
+      flex: 1;
+      height: 44px;
+      border-radius: 8px;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+      touch-action: manipulation;
+    }
+    .btn-approve {
+      background: var(--approve);
+      color: #ffffff;
+    }
+    .btn-approve:hover { background: var(--approve-hover); }
+    .btn-reject {
+      background: transparent;
+      color: var(--reject);
+      border: 1px solid var(--reject);
+    }
+    .btn-reject:hover { background: var(--reject)15; }
+    .notice {
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 16px;
+    }
+    .resolved-box {
+      text-align: center;
+      padding: 16px;
+      background: ${statusColor}10;
+      border: 1px solid ${statusColor}30;
+      border-radius: 10px;
+      color: ${statusColor};
+      font-size: 14px;
+      font-weight: 500;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">chamber<span>.</span></div>
+      <div class="badge"><span class="dot"></span> ${statusLabel}</div>
+    </div>
+
+    ${isNotFound ? `
+      <div class="resolved-box">
+        Gate not found or already purged.
+      </div>
+    ` : `
+      <div class="meta-box">
+        <div class="row"><span class="label">Gate ID</span><span class="val">${(gate.id || "").slice(0, 12)}…</span></div>
+        <div class="row"><span class="label">Action</span><span class="val">${gate.action || "approval-required"}</span></div>
+        ${gate.requestedBy ? `<div class="row"><span class="label">Requested By</span><span class="val">${gate.requestedBy}</span></div>` : ""}
+      </div>
+
+      <div class="desc-title">Description</div>
+      <div class="desc-text">${gate.description || "Action requires explicit human review and authorization."}</div>
+
+      ${isPending ? `
+        <form method="POST" action="/gate/${gate.id}?token=${encodeURIComponent(gate.token || "")}">
+          <input type="hidden" name="token" value="${gate.token || ""}">
+          <input type="hidden" name="approver" value="mobile-user">
+          <div class="actions">
+            <button type="submit" name="decision" value="approve" class="btn btn-approve">
+              Approve
+            </button>
+            <button type="submit" name="decision" value="reject" class="btn btn-reject">
+              Reject
+            </button>
+          </div>
+        </form>
+        <div class="notice">Remote authorization via E2EE Cloudflare Relay</div>
+      ` : `
+        <div class="resolved-box">
+          ${isApproved ? `✓ Action Approved${gate.approver ? " by " + gate.approver : ""}.<br><span style="font-size:12px;opacity:0.8;">The runner has been unblocked.</span>` : ""}
+          ${isRejected ? `✕ Action Rejected${gate.approver ? " by " + gate.approver : ""}.<br><span style="font-size:12px;opacity:0.8;">The runner will abort this task.</span>` : ""}
+          ${isExpired ? `⏱ Gate Expired.<br><span style="font-size:12px;opacity:0.8;">This request timed out before review.</span>` : ""}
+        </div>
+      `}
+    `}
+  </div>
+</body>
+</html>`;
 }

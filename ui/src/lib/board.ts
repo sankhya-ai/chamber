@@ -11,6 +11,7 @@ export interface Card {
   people: string[];
   with: string[];
   channel: string | null;
+  branch?: string | null;
   count: number;
   last: { from: string; text: string; ts: number };
   updated: number;
@@ -21,6 +22,9 @@ export interface TalkMessage {
   from: string;
   to: string;
   text: string;
+  type?: string;
+  patch?: string | null;
+  branch?: string | null;
   ts: number;
   files: { name: string; size?: number; path?: string; error?: string }[];
   mentions?: string[];

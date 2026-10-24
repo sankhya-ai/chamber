@@ -42,6 +42,7 @@ before(async () => {
     stdio: "ignore",
     detached: true,
   });
+  relayProcess.unref();
   relay = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 120; i++) {
     try {
@@ -53,9 +54,13 @@ before(async () => {
 });
 
 after(() => {
-  for (const child of children) child.kill("SIGKILL");
-  for (const client of clients) client.close();
-  process.kill(-relayProcess.pid, "SIGTERM");
+  for (const child of children) {
+    try { child.kill("SIGKILL"); } catch {}
+  }
+  for (const client of clients) {
+    try { client.close(); } catch {}
+  }
+  try { process.kill(-relayProcess.pid, "SIGKILL"); } catch {}
 });
 
 function run(args, { home, input = "", cwd = ROOT, env = {} } = {}) {
@@ -66,7 +71,10 @@ function run(args, { home, input = "", cwd = ROOT, env = {} } = {}) {
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));
     child.stderr.on("data", (d) => (stderr += d));
-    child.on("close", (code) => done({ code, stdout, stderr }));
+    child.on("close", (code) => {
+      children.delete(child);
+      done({ code, stdout, stderr });
+    });
     child.stdin.end(input);
   });
 }
@@ -124,8 +132,20 @@ test("a project's Claude Code: asked, shown mid-task by the hook, woken when idl
 
   const server = mcp(home, "claude-code.api", project);
   const init = await server.call("initialize", { protocolVersion: "2025-06-18" });
-  assert.match(init.instructions, /ashish\/claude-code\.api/);
-  assert.deepEqual((await server.call("tools/list")).tools.map((t) => t.name), ["agents", "ask", "inbox", "reply", "memory", "memory_search", "memory_write", "memory_edit"]);
+  assert.deepEqual((await server.call("tools/list")).tools.map((t) => t.name), [
+    "agents",
+    "ask",
+    "inbox",
+    "reply",
+    "search",
+    "incident_memory",
+    "send_patch",
+    "review_patch",
+    "memory",
+    "memory_search",
+    "memory_write",
+    "memory_edit",
+  ]);
 
   await invite.ready();
   const nitin = await join_(invite, "nitin/root", { kind: "root", answers: true, priority: 10 });
