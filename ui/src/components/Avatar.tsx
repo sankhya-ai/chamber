@@ -1,11 +1,39 @@
-import { hue } from "@/lib/board";
+import { Bot, Sparkles, Terminal } from "lucide-react";
+import { harnessOf, hue } from "@/lib/board";
 import { cn } from "@/lib/utils";
 
-/** A person's initial on a quiet colour, with an optional presence dot. */
-export function Avatar({ name, size = 24, online, className }: { name: string; size?: number; online?: boolean; className?: string }) {
+/** A person's initial on a quiet colour, with an optional presence dot and harness badge for agents. */
+export function Avatar({
+  name,
+  agent,
+  harness: harnessProp,
+  size = 24,
+  online,
+  presence = "online",
+  className,
+}: {
+  name: string;
+  agent?: string;
+  harness?: string;
+  size?: number;
+  online?: boolean;
+  presence?: "online" | "running" | "idle" | "away";
+  className?: string;
+}) {
   const channel = name.startsWith("#");
   const letter = channel ? "#" : (name.replace(/^@/, "")[0] ?? "?").toUpperCase();
   const h = hue(name.toLowerCase());
+  const harness = harnessProp ?? (agent ? harnessOf(agent) : null);
+
+  const presenceColor =
+    presence === "running"
+      ? "bg-blue-500 animate-pulse"
+      : presence === "away"
+      ? "bg-amber-500"
+      : online || presence === "online"
+      ? "bg-online"
+      : "bg-muted-foreground/40";
+
   return (
     <span className={cn("relative inline-flex shrink-0", className)} style={{ width: size, height: size }}>
       <span
@@ -18,10 +46,30 @@ export function Avatar({ name, size = 24, online, className }: { name: string; s
       >
         {letter}
       </span>
+
+      {/* Agent Harness badge */}
+      {harness ? (
+        <span
+          title={`${harness} harness`}
+          className="absolute -bottom-1 -right-1 flex items-center justify-center rounded-full border border-background bg-card text-[9px] font-bold text-foreground shadow-xs ring-1 ring-border"
+          style={{ width: Math.max(12, size * 0.48), height: Math.max(12, size * 0.48) }}
+        >
+          {harness === "Claude" ? (
+            <Sparkles className="size-2 text-amber-600 dark:text-amber-400" />
+          ) : harness === "Codex" ? (
+            <Terminal className="size-2 text-emerald-600 dark:text-emerald-400" />
+          ) : (
+            <Bot className="size-2 text-indigo-500" />
+          )}
+        </span>
+      ) : null}
+
+      {/* Presence dot */}
       {online !== undefined ? (
         <span
-          className={cn("absolute -right-0.5 -bottom-0.5 rounded-full border-2 border-background", online ? "bg-online" : "bg-muted-foreground/40")}
-          style={{ width: Math.max(8, size * 0.36), height: Math.max(8, size * 0.36) }}
+          className={cn("absolute rounded-full border-2 border-background", harness ? "-top-0.5 -right-0.5" : "-bottom-0.5 -right-0.5", presenceColor)}
+          style={{ width: Math.max(7, size * 0.32), height: Math.max(7, size * 0.32) }}
+          title={online ? (presence === "running" ? "running" : "online") : "idle / offline"}
         />
       ) : null}
     </span>

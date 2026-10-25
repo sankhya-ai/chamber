@@ -1,4 +1,4 @@
-import { Bot, FileText, GitBranch, X } from "lucide-react";
+import { Bot, FileText, GitBranch, Hash, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
@@ -6,7 +6,7 @@ import { ChannelCanvas } from "@/components/ChannelCanvas";
 import { Composer } from "@/components/Composer";
 import { GateCard } from "@/components/GateCard";
 import { PatchCard } from "@/components/PatchCard";
-import { api } from "@/lib/api";
+import { api, type AttachedFile } from "@/lib/api";
 import { address, ago, defaultRecipient, personOf, who, type Talk } from "@/lib/board";
 import { cn } from "@/lib/utils";
 
@@ -22,8 +22,24 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
 }) {
   const [talk, setTalk] = useState<Talk | null>(null);
   const [to, setTo] = useState(fixedTo);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const toContainerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const count = talk?.messages.length ?? 0;
+
+  const filtered = people.filter((p) => !to || p.toLowerCase().includes(to.toLowerCase()));
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (toContainerRef.current && !toContainerRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   useEffect(() => {
     setTalk(null);
@@ -43,14 +59,15 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
     if (list.current) list.current.scrollTop = list.current.scrollHeight;
   }, [count]);
 
-  const send = async (text: string) => {
+  const send = async (text: string, files: AttachedFile[] = []) => {
     if (talkId && talk) {
-      await api.say(talkId, defaultRecipient(talk, me), text);
+      await api.say(talkId, defaultRecipient(talk, me), text, files);
       setTalk(await api.talk(talkId));
     } else {
       const target = address(to);
       if (!target) throw new Error("Who is it for? Type a name, e.g. nitin, or a #channel.");
-      onStarted((await api.startTalk(target, text, text.split("\n")[0].slice(0, 80))).thread);
+      const fallbackTitle = text ? text.split("\n")[0].slice(0, 80) : files[0] ? `File: ${files[0].name}` : "New talk";
+      onStarted((await api.startTalk(target, text, fallbackTitle, files)).thread);
     }
     onChanged();
   };
@@ -80,17 +97,108 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
 
       <div ref={list} className="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {!talkId ? (
-          <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2">
-            <span className="text-muted-foreground">To</span>
-            <input
-              autoFocus={!fixedTo}
-              list="people"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              placeholder="nitin, #general, or an agent"
-              className="flex-1 bg-transparent outline-none"
-            />
-            <datalist id="people">{people.map((p) => <option key={p} value={p} />)}</datalist>
+          <div ref={toContainerRef} className="relative mb-3">
+            <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 transition-colors focus-within:border-ring focus-within:bg-background">
+              <span className="text-sm font-medium text-muted-foreground">To</span>
+              <input
+                ref={inputRef}
+                autoFocus={!fixedTo}
+                value={to}
+                onChange={(e) => {
+                  setTo(e.target.value);
+                  setDropdownOpen(true);
+                  setHighlightedIndex(0);
+                }}
+                onFocus={() => {
+                  setDropdownOpen(true);
+                  setHighlightedIndex(0);
+                }}
+                onKeyDown={(e) => {
+                  if (!dropdownOpen || filtered.length === 0) {
+                    if (e.key === "ArrowDown") {
+                      setDropdownOpen(true);
+                      e.preventDefault();
+                    }
+                    return;
+                  }
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setHighlightedIndex((prev) => (prev + 1) % filtered.length);
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setHighlightedIndex((prev) => (prev - 1 + filtered.length) % filtered.length);
+                  } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (filtered[highlightedIndex]) {
+                      setTo(filtered[highlightedIndex]);
+                      setDropdownOpen(false);
+                    }
+                  } else if (e.key === "Escape") {
+                    setDropdownOpen(false);
+                  }
+                }}
+                placeholder="nitin, #general, or an agent"
+                className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/70"
+              />
+              {to ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTo("");
+                    inputRef.current?.focus();
+                  }}
+                  className="size-4 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="size-3.5" />
+                </button>
+              ) : null}
+            </div>
+
+            {dropdownOpen && filtered.length > 0 ? (
+              <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-56 overflow-y-auto rounded-lg border border-border bg-popover text-popover-foreground shadow-lg p-1">
+                {filtered.map((item, idx) => {
+                  const isChannel = item.startsWith("#");
+                  const isAgent = item.includes("/") && !item.endsWith("/board");
+                  const isHighlighted = idx === highlightedIndex;
+
+                  return (
+                    <div
+                      key={item}
+                      role="option"
+                      aria-selected={isHighlighted}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setTo(item);
+                        setDropdownOpen(false);
+                      }}
+                      onMouseEnter={() => setHighlightedIndex(idx)}
+                      className={cn(
+                        "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm cursor-pointer transition-colors",
+                        isHighlighted ? "bg-accent text-accent-foreground font-medium" : "text-foreground hover:bg-accent/70"
+                      )}
+                    >
+                      {isChannel ? (
+                        <div className="flex size-5 items-center justify-center rounded bg-muted">
+                          <Hash className="size-3.5 text-muted-foreground" />
+                        </div>
+                      ) : isAgent ? (
+                        <div className="flex size-5 items-center justify-center rounded bg-amber-500/15">
+                          <Bot className="size-3.5 text-amber-500" />
+                        </div>
+                      ) : (
+                        <Avatar name={item} size={20} />
+                      )}
+
+                      <span className="truncate flex-1">{item}</span>
+
+                      <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider">
+                        {isChannel ? "channel" : isAgent ? "agent" : "person"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
           </div>
         ) : null}
         {talk?.messages.map((m, i) => {
@@ -125,7 +233,7 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
                 )}
                 
                 {gateId ? (
-                  <GateCard gateId={gateId} description={m.text} requestedBy={m.from} onResolved={onChanged} />
+                  <GateCard gateId={gateId} description={m.text} requestedBy={m.from} me={me} onResolved={onChanged} />
                 ) : hasPatch && patchContent ? (
                   <>
                     <div className="whitespace-pre-wrap break-words leading-relaxed">{m.text.replace(/diff --git[\s\S]*/, "").trim() || "Sent a patch:"}</div>
@@ -136,14 +244,38 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
                 )}
 
                 {m.files?.length ? (
-                  <div className="mt-1 flex flex-wrap gap-1.5">
+                  <div className="mt-2 flex flex-col gap-2">
                     {m.files.map((f) => {
+                      const isImage = /\.(png|jpe?g|webp|gif|svg)$/i.test(f.name);
+                      const href = f.path ? `/api/board/files?path=${encodeURIComponent(f.path)}` : null;
+
+                      if (isImage && href) {
+                        return (
+                          <div key={f.name} className="mt-1">
+                            <a href={href} target="_blank" rel="noreferrer" className="block max-w-sm overflow-hidden rounded-lg border hover:opacity-95 transition-opacity">
+                              <img src={href} alt={f.name} className="max-h-60 max-w-full rounded-md object-contain bg-muted/20" />
+                            </a>
+                            <span className="text-[11px] text-muted-foreground mt-0.5 block">
+                              {f.name} {f.size ? `(${Math.round(f.size / 1024)} KB)` : ""}
+                            </span>
+                          </div>
+                        );
+                      }
+
                       const chip = (
-                        <span className="inline-flex items-center gap-1 rounded-md border bg-muted/60 px-2 py-0.5 text-[12px]">
-                          <FileText className="size-3" /> {f.name}
+                        <span className="inline-flex items-center gap-1.5 rounded-md border bg-muted/60 px-2.5 py-1 text-[12px] hover:bg-muted transition-colors">
+                          <FileText className="size-3.5 text-muted-foreground shrink-0" />
+                          <span className="font-medium text-foreground">{f.name}</span>
+                          {f.size ? <span className="text-muted-foreground/70 text-[10px]">({Math.round(f.size / 1024)} KB)</span> : null}
                         </span>
                       );
-                      return f.path ? <a key={f.name} href={`/api/board/files?path=${encodeURIComponent(f.path)}`} target="_blank" rel="noreferrer">{chip}</a> : <span key={f.name}>{chip}</span>;
+                      return href ? (
+                        <a key={f.name} href={href} target="_blank" rel="noreferrer" className="inline-block">
+                          {chip}
+                        </a>
+                      ) : (
+                        <span key={f.name} className="inline-block">{chip}</span>
+                      );
                     })}
                   </div>
                 ) : null}

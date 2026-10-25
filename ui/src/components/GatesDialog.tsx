@@ -7,10 +7,11 @@ import { GateCard } from "@/components/GateCard";
 interface GatesDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  me?: string;
   onChanged?: () => void;
 }
 
-export function GatesDialog({ open, onOpenChange, onChanged }: GatesDialogProps) {
+export function GatesDialog({ open, onOpenChange, me = "", onChanged }: GatesDialogProps) {
   const [gates, setGates] = useState<Gate[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -32,7 +33,7 @@ export function GatesDialog({ open, onOpenChange, onChanged }: GatesDialogProps)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-xl">
         <DialogHeader>
           <div className="flex items-center gap-2">
             <Shield className="size-5 text-amber-500" />
@@ -43,7 +44,7 @@ export function GatesDialog({ open, onOpenChange, onChanged }: GatesDialogProps)
           </DialogDescription>
         </DialogHeader>
 
-        <div className="max-h-80 overflow-y-auto py-2">
+        <div className="max-h-[70vh] overflow-y-auto py-2 pr-1">
           {loading ? (
             <p className="py-4 text-center text-xs text-muted-foreground">Checking pending gates...</p>
           ) : gates.length === 0 ? (
@@ -60,8 +61,15 @@ export function GatesDialog({ open, onOpenChange, onChanged }: GatesDialogProps)
                 key={g.id}
                 gateId={g.id}
                 description={g.description}
+                action={g.action}
                 requestedBy={g.requestedBy}
+                expiresAt={g.expiresAt}
+                createdAt={g.createdAt}
+                resolvedAt={g.resolvedAt}
+                resolvedBy={g.resolvedBy}
+                lineId={g.lineId}
                 initialStatus={g.status}
+                me={me}
                 onResolved={() => {
                   loadGates();
                   onChanged?.();

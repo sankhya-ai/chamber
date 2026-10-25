@@ -106,9 +106,122 @@ function Files({ onTalk }: { onTalk: (id: string) => void }) {
             <Markdown text={text} onLink={openLink} onSource={onTalk} />
           </>
         ) : (
-          <p className="text-muted-foreground">{files.length ? `No file ${open}.` : "Nothing remembered yet."}</p>
+          <SuggestedMemoriesView onTalk={onTalk} onMemoryCreated={() => {
+            api.memory().then((r) => setFiles(r.files));
+          }} />
         )}
       </div>
+    </div>
+  );
+}
+
+function SuggestedMemoriesView({ onTalk, onMemoryCreated }: { onTalk: (id: string) => void; onMemoryCreated: () => void }) {
+  const [suggestions, setSuggestions] = useState<import("@/lib/api").SearchHit[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [accepting, setAccepting] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    api.search("decision OR contract OR schema OR policy OR test OR port OR model", "", "")
+      .then((res) => {
+        setSuggestions((res.hits || []).slice(0, 5));
+      })
+      .catch(() => setSuggestions([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleAccept = async (hit: import("@/lib/api").SearchHit) => {
+    setAccepting(hit.id);
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const entry = `\n\n## ${hit.title || "Decision / Architecture Contract"}\n\n${hit.text}\n\n[source: talk/${hit.talkId}#${hit.messageId}; by: ${hit.sender}; added: ${today}]`;
+      const current = await api.memoryFile("MEMORY.md").catch(() => ({ text: "" }));
+      const baseText = current?.text || "# Team Memory\n\nCore decisions, contracts, and conventions remembered by the team.\n";
+      await api.saveMemoryFile("MEMORY.md", baseText + entry, `Accept decision from talk/${hit.talkId}`);
+      onMemoryCreated();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setAccepting(null);
+    }
+  };
+
+  const handleDismiss = (id: string) => {
+    setSuggestions((s) => s.filter((item) => item.id !== id));
+  };
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center text-xs text-muted-foreground">
+        Scanning talks for proposed decisions and contracts…
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-2xl py-2">
+      <div className="mb-6 rounded-xl border bg-muted/30 p-5">
+        <div className="flex items-start gap-3">
+          <Sparkles className="mt-0.5 size-5 text-dot shrink-0" />
+          <div>
+            <h3 className="font-semibold text-foreground">Suggested Memories (Pending Human Review)</h3>
+            <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+              Chamber extracts proposed decisions, architectural contracts, and conventions from talks.
+              Unlike automated databases, team memory is human-reviewed: accept what belongs in shared repo memory, or dismiss one-offs.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {suggestions.length === 0 ? (
+        <div className="py-12 text-center text-xs text-muted-foreground border rounded-xl border-dashed p-8">
+          <p className="font-medium text-foreground text-sm">Nothing remembered yet</p>
+          <p className="mt-1.5 max-w-md mx-auto text-muted-foreground">
+            As your agents discuss code, decisions and contracts will be extracted here with source citations for you to review and commit.
+          </p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {suggestions.map((s) => (
+            <div key={s.id} className="rounded-lg border bg-card p-4 shadow-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-[13px] text-foreground">{s.title || "Architectural Decision"}</span>
+                <button
+                  onClick={() => onTalk(s.talkId)}
+                  className="inline-flex items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground bg-muted px-1.5 py-0.5 rounded"
+                  title="Open source talk"
+                >
+                  ↗ talk/{s.talkId.slice(0, 8)}
+                </button>
+              </div>
+
+              <blockquote className="my-2.5 border-l-2 border-dot/60 pl-3 text-xs italic text-muted-foreground/90 leading-relaxed">
+                "{s.text.slice(0, 200)}{s.text.length > 200 ? "…" : ""}"
+              </blockquote>
+
+              <div className="flex items-center justify-between pt-2 border-t border-border/40 text-[11px]">
+                <span className="text-muted-foreground">From <strong className="font-medium text-foreground">{s.sender}</strong></span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleDismiss(s.id)}
+                    className="text-muted-foreground hover:text-foreground px-2 py-1 rounded"
+                  >
+                    Dismiss
+                  </button>
+                  <Button
+                    size="sm"
+                    disabled={accepting === s.id}
+                    onClick={() => handleAccept(s)}
+                    className="h-7 text-xs bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs"
+                  >
+                    {accepting === s.id ? "Saving…" : "Accept into Memory"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

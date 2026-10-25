@@ -5,16 +5,18 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { ApprovalGateManager, installDefaultWorkflows, verifyWorkflow } from "../lib/runner.mjs";
+import { newAdminKey } from "../lib/admin.mjs";
 import { LineTools } from "../lib/mcp.mjs";
 import { Inbox } from "../lib/inbox.mjs";
 import { threads } from "../lib/board.mjs";
 
 test("installDefaultWorkflows: creates pre-signed on-patch.yaml and on-gate.yaml", async () => {
   const tmp = mkdtempSync(join(tmpdir(), "chamber-workflows-"));
-  const adminSecret = "0123456789abcdef0123456789abcdef";
+  const admin = newAdminKey();
+  const lineId = "testline1234567890abcdef12345678";
 
   try {
-    const { patchFile, gateFile } = await installDefaultWorkflows(tmp, adminSecret);
+    const { patchFile, gateFile } = await installDefaultWorkflows(tmp, admin.private, lineId);
 
     assert.ok(patchFile);
     assert.ok(gateFile);
@@ -26,15 +28,15 @@ test("installDefaultWorkflows: creates pre-signed on-patch.yaml and on-gate.yaml
     assert.match(patchContent, /on: patch/);
     assert.match(patchContent, /git apply --check/);
 
-    assert.match(gateContent, /name: on-gate/);
+    assert.match(gateContent, /name: on-migration/);
     assert.match(gateContent, /gate:/);
-    assert.match(gateContent, /deploy-prod-migration/);
+    assert.match(gateContent, /db-migrate/);
 
-    // Verify cryptographic signatures
-    const patchCheck = await verifyWorkflow(patchContent, adminSecret);
+    // Verify cryptographic Ed25519 signatures
+    const patchCheck = verifyWorkflow(patchContent, admin.public, { lineId });
     assert.equal(patchCheck.valid, true);
 
-    const gateCheck = await verifyWorkflow(gateContent, adminSecret);
+    const gateCheck = verifyWorkflow(gateContent, admin.public, { lineId });
     assert.equal(gateCheck.valid, true);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -51,8 +53,18 @@ test("ApprovalGateManager: remote mobile URL and remote sync", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (url, opts = {}) => {
       const u = new URL(url);
-      if (u.pathname.startsWith("/v1/gate/")) {
-        return { ok: true, status: 200, json: async () => ({ ok: true, status: "pending" }) };
+      if (u.pathname.includes("/gates")) {
+        if (opts.method === "POST") {
+          return { ok: true, status: 200, json: async () => ({ ok: true, status: "pending" }) };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            gate: { status: remoteStatus, approver: "phone-user" },
+          }),
+        };
       }
       if (u.pathname.startsWith("/gate/")) {
         if (opts.method === "POST") {
@@ -72,26 +84,28 @@ test("ApprovalGateManager: remote mobile URL and remote sync", async () => {
       return originalFetch(url, opts);
     };
 
-    const gate = mgr.createGate({
+    const gate = await mgr.createGate({
       description: "Run database migration",
       action: "migrate:up",
       requestedBy: "ashish/claude-code",
       relayUrl: "https://relay.chamber.dev",
+      lineId: "testline1234567890abcdef12345678",
+      authToken: "test-auth-token",
     });
 
     assert.equal(gate.status, "pending");
     assert.ok(gate.mobileUrl);
-    assert.match(gate.mobileUrl, /^https:\/\/relay\.chamber\.dev\/gate\/[0-9a-f]{32}\?token=[0-9a-f]{48}$/);
+    assert.match(gate.mobileUrl, /^https:\/\/relay\.chamber\.dev\/gate\/[a-z0-9_-]{16,64}\/[0-9a-f]{32}\?token=[0-9a-f]{48}#[A-Za-z0-9_-]+$/);
 
     // Initial remote sync: still pending
-    const synced1 = await mgr.syncRemote(gate.id, "https://relay.chamber.dev");
+    const synced1 = await mgr.syncRemote(gate.id, "https://relay.chamber.dev", "testline1234567890abcdef12345678", "test-auth-token");
     assert.equal(synced1.status, "pending");
 
     // Simulate mobile user approving on phone
     remoteStatus = "approved";
 
     // Second remote sync: catches the phone approval and unblocks local gate
-    const synced2 = await mgr.syncRemote(gate.id, "https://relay.chamber.dev");
+    const synced2 = await mgr.syncRemote(gate.id, "https://relay.chamber.dev", "testline1234567890abcdef12345678", "test-auth-token");
     assert.equal(synced2.status, "approved");
     assert.equal(synced2.resolvedBy, "phone-user");
 

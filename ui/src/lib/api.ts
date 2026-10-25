@@ -15,8 +15,22 @@ export interface Dream {
   changes: string[];
 }
 
+function getSessionToken(): string {
+  try {
+    return document.querySelector<HTMLMetaElement>('meta[name="chamber-token"]')?.content || "";
+  } catch {
+    return "";
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { ...init, headers: { "Content-Type": "application/json", ...(init.headers ?? {}) } });
+  const token = getSessionToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(token ? { "x-chamber-token": token } : {}),
+    ...((init.headers as Record<string, string>) ?? {}),
+  };
+  const response = await fetch(path, { ...init, headers });
   if (!response.ok) {
     let detail = response.statusText;
     try {
@@ -31,11 +45,21 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const post = <T>(path: string, body: unknown = {}) => request<T>(path, { method: "POST", body: JSON.stringify(body) });
 
+export interface AttachedFile {
+  name: string;
+  data: string; // base64
+  size: number;
+}
+
 export const api = {
   board: () => request<BoardData>("/api/board"),
+  session: () => request<{ token: string; me: string }>("/api/board/session"),
   talk: (id: string) => request<Talk>(`/api/board/talks/${encodeURIComponent(id)}?seen=1`), // opening a talk marks it read
-  say: (id: string, to: string, text: string) => post<{ id: string; thread: string }>(`/api/board/talks/${encodeURIComponent(id)}`, { to, text }),
-  startTalk: (to: string, text: string, title: string) => post<{ id: string; thread: string }>("/api/board/talks", { to, text, title }),
+  say: (id: string, to: string, text: string, files: AttachedFile[] = []) =>
+    post<{ id: string; thread: string }>(`/api/board/talks/${encodeURIComponent(id)}`, { to, text, files }),
+  startTalk: (to: string, text: string, title: string, files: AttachedFile[] = []) =>
+    post<{ id: string; thread: string }>("/api/board/talks", { to, text, title, files }),
+  markDone: (id: string, done = true) => post<{ ok: boolean; done: boolean }>(`/api/board/talks/${encodeURIComponent(id)}/done`, { done }),
   channel: (op: "join" | "leave" | "add", name: string, owner?: string) => post<{ ok: boolean; channel: string }>("/api/board/channels", { op, name, owner }),
   addWorkspace: (path: string) => post<{ output: string }>("/api/board/workspaces", { path }),
   pickFolder: () => post<{ path?: string; cancelled?: boolean }>("/api/board/workspaces/pick"),
@@ -63,6 +87,8 @@ export const api = {
   setAway: (enabled: boolean, status?: string) => post<{ running: boolean; status: string }>("/api/board/away", { enabled, status }),
   reviewPatch: (patch: string, workspacePath?: string) =>
     post<{ appliesCleanly: boolean; stat: string; error?: string | null }>("/api/board/review_patch", { patch, workspacePath }),
+  applyPatch: (patch: string, workspacePath?: string) =>
+    post<{ success: boolean; output: string }>("/api/board/apply_patch", { patch, workspacePath }),
 };
 
 export interface SearchHit {
@@ -79,11 +105,23 @@ export interface SearchHit {
   citation: string;
 }
 
+export interface GateActionDetails {
+  command?: string;
+  diff?: string;
+  files?: string[];
+  environment?: string;
+  cwd?: string;
+  approvers?: string[];
+  policy?: string;
+}
+
 export interface Gate {
   id: string;
   token?: string;
+  lineId?: string;
+  mobileUrl?: string;
   description: string;
-  action: string;
+  action: string | GateActionDetails;
   requestedBy: string;
   status: "pending" | "approved" | "rejected" | "expired";
   createdAt: number;

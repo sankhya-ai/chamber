@@ -73,16 +73,35 @@ export default {
     if (url.pathname === "/v1/relay") return json({ claimed: (await relayConfig(env)).claimed, relay: RELAY_VERSION });
     const served = install(url);
     if (served) return served;
-    const gateMatch = url.pathname.match(/^\/(?:v1\/)?gate\/([0-9a-f]{16,64})(?:\/([a-z0-9_-]+))?$/i);
-    if (gateMatch) {
-      const [, gateId, sub] = gateMatch;
-      const stub = env.LINES.get(env.LINES.idFromName("__chamber_relay_gates__"));
-      const forwarded = new Request(`https://line/gate/${gateId}${sub ? "/" + sub : ""}${url.search}`, request);
+
+    // Mobile approval routes: /gate/:line/:gateId or /gate/:gateId?line=:line
+    const mobileLineGateMatch = url.pathname.match(/^\/gate\/([0-9a-f]{32})\/([0-9a-f]{16,64})$/i);
+    if (mobileLineGateMatch) {
+      const [, line, gateId] = mobileLineGateMatch;
+      const config = await relayConfig(env);
+      const allowed = config.lines;
+      if (allowed.length && !allowed.includes(line)) return json({ error: "this relay serves only its own chambers" }, 403);
+      const stub = env.LINES.get(env.LINES.idFromName(line));
+      const forwarded = new Request(`https://line/gate/${gateId}${url.search}`, request);
       return stub.fetch(forwarded);
     }
-    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|roster|members|admin|sync|memory(?:\/(?:file|commit|history))?|restart|blobs\/([^/]+))$/);
+
+    const singleGateMatch = url.pathname.match(/^\/(?:v1\/)?gate\/([0-9a-f]{16,64})(?:\/([a-z0-9_-]+))?$/i);
+    if (singleGateMatch) {
+      const [, gateId, sub] = singleGateMatch;
+      const config = await relayConfig(env);
+      const line = url.searchParams.get("line") || (config.lines.length === 1 ? config.lines[0] : null);
+      if (line) {
+        const stub = env.LINES.get(env.LINES.idFromName(line));
+        const forwarded = new Request(`https://line/gate/${gateId}${sub ? "/" + sub : ""}${url.search}`, request);
+        return stub.fetch(forwarded);
+      }
+      return json({ error: "line required for gate review" }, 400);
+    }
+
+    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|roster|members|admin|sync|memory(?:\/(?:file|commit|history))?|gates(?:\/([0-9a-f]{16,64}))?|gate\/([0-9a-f]{16,64})|restart|blobs\/([^/]+))$/);
     if (!match) return json({ error: "not found" }, 404);
-    const [, line, what, blob] = match;
+    const [, line, what, , , blob] = match;
     const token = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
     if (!LINE.test(line) || !token || (await lineOf(token)) !== line) return json({ error: "unauthorized" }, 401);
     const config = await relayConfig(env);
@@ -209,6 +228,7 @@ export class Line {
       id TEXT PRIMARY KEY,
       token TEXT NOT NULL,
       line TEXT,
+      sealed TEXT NOT NULL DEFAULT '',
       description TEXT,
       action TEXT,
       requestedBy TEXT,
@@ -218,6 +238,8 @@ export class Line {
       expiresAt INTEGER NOT NULL,
       resolvedAt INTEGER
     )`);
+    const gateColumns = this.sql.exec("PRAGMA table_info(gates)").toArray().map((c) => c.name);
+    if (!gateColumns.includes("sealed")) this.sql.exec("ALTER TABLE gates ADD COLUMN sealed TEXT NOT NULL DEFAULT ''");
   }
 
   // ----- channels ---------------------------------------------------------------
@@ -297,10 +319,49 @@ export class Line {
     }
     if (what === "admin") return this.admin(await request.json().catch(() => ({})));
     if (what === "sync") {
+      const pass = request.headers.get("x-chamber-pass");
+      const refused = await this.memberCheck(pass);
+      if (refused) return json({ error: refused }, 403);
+
       const since = Number(new URL(request.url).searchParams.get("since") || 0);
       const limit = Math.min(500, Math.max(1, Number(new URL(request.url).searchParams.get("limit") || 100)));
-      const rows = this.sql.exec("SELECT * FROM messages WHERE seq > ? ORDER BY seq ASC LIMIT ?", since, limit).toArray();
-      const head = this.sql.exec("SELECT MAX(seq) AS max_seq FROM messages").one()?.max_seq ?? 0;
+      const adminKey = await this.adminKey();
+      let owner = null;
+      if (adminKey && pass) {
+        const claims = await signedByAdmin(adminKey, pass);
+        if (claims?.member) {
+          const row = this.sql.exec("SELECT owner FROM names WHERE member = ?", claims.member).toArray()[0];
+          owner = row?.owner ?? null;
+        }
+      }
+      if (!owner) {
+        const asHeader = request.headers.get("x-chamber-owner") || new URL(request.url).searchParams.get("as");
+        if (asHeader && OWNER.test(asHeader)) owner = asHeader.toLowerCase();
+      }
+
+      let rows;
+      if (owner) {
+        rows = this.sql.exec(`
+          SELECT * FROM messages
+          WHERE seq > ?
+            AND (
+              from_agent LIKE ? || '/%'
+              OR to_owner = ?
+              OR to_agent LIKE ? || '/%'
+              OR to_agent = '*'
+              OR (to_agent LIKE '#%' AND to_agent IN (SELECT name FROM channels WHERE owner = ?))
+            )
+          ORDER BY seq ASC LIMIT ?
+        `, since, owner, owner, owner, owner, limit).toArray();
+      } else {
+        rows = this.sql.exec(`
+          SELECT * FROM messages
+          WHERE seq > ?
+            AND (to_agent = '*' OR to_agent = '#general')
+          ORDER BY seq ASC LIMIT ?
+        `, since, limit).toArray();
+      }
+      const head = this.sql.exec("SELECT MAX(seq) AS max_seq FROM messages").toArray()[0]?.max_seq ?? 0;
       return json({
         messages: rows.map((r) => this.envelope(r)),
         head,
@@ -318,7 +379,7 @@ export class Line {
       if (refused) return json({ error: refused }, 403);
       return this.memory(what, request);
     }
-    if (what.startsWith("gate/")) {
+    if (what.startsWith("gate/") || what === "gates" || what.startsWith("gates/")) {
       return this.handleGate(what, request);
     }
     const pair = new WebSocketPair();
@@ -377,7 +438,7 @@ export class Line {
   async memory(what, request) {
     const url = new URL(request.url);
     if (what === "memory") {
-      const head = this.sql.exec("SELECT MAX(seq) AS head FROM mem_commits").one().head ?? 0;
+      const head = this.sql.exec("SELECT MAX(seq) AS head FROM mem_commits").toArray()[0]?.head ?? 0;
       return json({ head, files: this.sql.exec("SELECT path, version, author, ts FROM mem_files ORDER BY path").toArray() });
     }
     if (what === "memory/file") {
@@ -406,20 +467,20 @@ export class Line {
       .map((c) => ({ c, row: this.sql.exec("SELECT path, version, body FROM mem_files WHERE path = ?", c.path).toArray()[0] }))
       .filter(({ c, row }) => (row?.version ?? 0) !== Number(c.base || 0));
     if (stale.length) return json({ error: "stale", current: stale.map(({ c, row }) => row ?? { path: c.path, version: 0, body: null }) }, 409);
-    const count = this.sql.exec("SELECT COUNT(*) AS n FROM mem_files").one().n;
+    const count = this.sql.exec("SELECT COUNT(*) AS n FROM mem_files").toArray()[0]?.n ?? 0;
     if (count + changes.filter((c) => c.body !== null && !Number(c.base)).length > MAX_MEMORY_FILES) return json({ error: "memory is full" }, 413);
     const now = Date.now();
     const author = String(commit.author || "").slice(0, 80);
     const applied = [];
     for (const c of changes) {
-      const highest = this.sql.exec("SELECT MAX(version) AS v FROM mem_versions WHERE path = ?", c.path).one().v ?? 0;
+      const highest = this.sql.exec("SELECT MAX(version) AS v FROM mem_versions WHERE path = ?", c.path).toArray()[0]?.v ?? 0;
       const to = Math.max(Number(c.base || 0), highest) + 1; // a re-created file continues its history
       this.sql.exec("INSERT OR REPLACE INTO mem_versions (path, version, body) VALUES (?, ?, ?)", c.path, to, c.body);
       if (c.body === null) this.sql.exec("DELETE FROM mem_files WHERE path = ?", c.path);
       else this.sql.exec("INSERT OR REPLACE INTO mem_files (path, version, body, author, ts) VALUES (?, ?, ?, ?, ?)", c.path, to, c.body, author, now);
       applied.push({ path: c.path, from: Number(c.base || 0), to, deleted: c.body === null });
     }
-    const row = this.sql.exec("INSERT INTO mem_commits (author, message, changes, ts) VALUES (?, ?, ?, ?) RETURNING seq", author, String(commit.message || "").slice(0, 500), JSON.stringify(applied), now).one();
+    const row = this.sql.exec("INSERT INTO mem_commits (author, message, changes, ts) VALUES (?, ?, ?, ?) RETURNING seq", author, String(commit.message || "").slice(0, 500), JSON.stringify(applied), now).toArray()[0] ?? { seq: 0 };
     const frame = JSON.stringify({ t: "memory", head: row.seq, author, changes: applied });
     for (const { ws } of this.members()) this.send(ws, frame);
     return json({ ok: true, seq: row.seq, changes: applied });
@@ -592,7 +653,7 @@ export class Line {
         blobIds.join(","),
         mentions.length ? `,${mentions.join(",")},` : "",
       )
-      .one();
+      .toArray()[0];
     const envelope = JSON.stringify(this.envelope(row));
     let delivered = [];
     for (const { ws: other, who: them } of this.members()) {
@@ -624,36 +685,47 @@ export class Line {
   }
 
   async handleGate(what, request) {
-    const parts = what.split("/").slice(1);
-    const gateId = parts[0];
-    const sub = parts[1] || "";
+    const parts = what.replace(/^v1\//, "").split("/").filter(Boolean);
+    const gateId = (parts[0] === "gates" || parts[0] === "gate") ? (parts[1] || "") : parts[0];
+    const sub = (parts[0] === "gates" || parts[0] === "gate") ? (parts[2] || "") : (parts[1] || "");
     const url = new URL(request.url);
     const token = url.searchParams.get("token") || request.headers.get("x-gate-token") || "";
 
-    // Registration: POST /v1/gate/:id or POST /gate/:id/register
-    if (request.method === "POST" && (sub === "register" || !sub && request.headers.get("content-type")?.includes("application/json"))) {
+    // Registration: POST /v1/lines/:line/gates or POST /gates or POST /gate/:id
+    if (request.method === "POST" && (!gateId || sub === "register" || !sub && request.headers.get("content-type")?.includes("application/json"))) {
       const body = await request.clone().json().catch(() => ({}));
-      if (body.action || body.description) {
-        const row = this.sql.exec("SELECT * FROM gates WHERE id = ?", gateId).one();
-        if (row && body.token && row.token !== body.token) return json({ error: "gate already exists" }, 409);
+      const id = gateId || body.id;
+      if (id && (body.action || body.description || body.sealed)) {
+        const row = this.sql.exec("SELECT * FROM gates WHERE id = ?", id).toArray()[0] ?? null;
+        if (row) {
+          if (body.token && row.token !== body.token) return json({ error: "gate already exists" }, 409);
+          return json({ ok: true, id, status: row.status });
+        }
         const expiresAt = body.expiresAt || (Date.now() + (Number(body.expiresMinutes) || 60) * 60 * 1000);
         this.sql.exec(
-          `INSERT OR REPLACE INTO gates (id, token, line, description, action, requestedBy, status, createdAt, expiresAt)
-           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-          gateId,
+          `INSERT INTO gates (id, token, line, sealed, description, action, requestedBy, status, createdAt, expiresAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+          id,
           body.token || token,
-          body.line || "",
+          body.line || this.line || "",
+          body.sealed || "",
           body.description || "",
           body.action || "action",
           body.requestedBy || "agent",
           Date.now(),
           expiresAt
         );
-        return json({ ok: true, id: gateId, status: "pending" });
+        return json({ ok: true, id, status: "pending" });
       }
     }
 
-    let gate = this.sql.exec("SELECT * FROM gates WHERE id = ?", gateId).one();
+    // List gates: GET /gates
+    if (!gateId && request.method === "GET") {
+      const rows = this.sql.exec("SELECT id, line, sealed, description, action, requestedBy, status, approver, createdAt, expiresAt, resolvedAt FROM gates ORDER BY createdAt DESC LIMIT 50").toArray();
+      return json({ gates: rows });
+    }
+
+    let gate = this.sql.exec("SELECT * FROM gates WHERE id = ?", gateId).toArray()[0] ?? null;
     if (!gate) {
       if (request.headers.get("accept")?.includes("text/html")) {
         return new Response(gateHtml({ id: gateId, status: "not_found" }), {
@@ -686,7 +758,7 @@ export class Line {
 
     if (gate.token && reqToken !== gate.token) {
       if (request.headers.get("accept")?.includes("text/html")) {
-        return new Response(gateHtml({ ...gate, error: "Invalid or missing approval token" }), {
+        return new Response(gateUnauthorizedHtml(), {
           status: 401,
           headers: { "content-type": "text/html; charset=utf-8" },
         });
@@ -709,7 +781,7 @@ export class Line {
           Date.now(),
           gateId
         );
-        gate = this.sql.exec("SELECT * FROM gates WHERE id = ?", gateId).one();
+        gate = this.sql.exec("SELECT * FROM gates WHERE id = ?", gateId).toArray()[0] ?? null;
       }
       if (request.headers.get("accept")?.includes("application/json") || url.searchParams.get("format") === "json") {
         return json({ ok: true, gate });
@@ -767,6 +839,38 @@ export class Line {
   }
 }
 
+function escapeHtml(str) {
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function gateUnauthorizedHtml() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unauthorized · chamber</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #09090b; color: #f4f4f5; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 16px; }
+    .card { background: #18181b; border: 1px solid #ef444433; border-radius: 12px; padding: 24px; max-width: 400px; text-align: center; }
+    h2 { color: #ef4444; margin-top: 0; font-size: 18px; }
+    p { color: #a1a1aa; font-size: 14px; line-height: 1.5; margin-bottom: 0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Access Denied</h2>
+    <p>A valid approval token is required to review or authorize this gate.</p>
+  </div>
+</body>
+</html>`;
+}
+
 function gateHtml(gate) {
   const isPending = gate.status === "pending";
   const isApproved = gate.status === "approved";
@@ -776,6 +880,9 @@ function gateHtml(gate) {
 
   const statusColor = isApproved ? "#10b981" : isRejected ? "#f43f5e" : isPending ? "#f59e0b" : "#71717a";
   const statusLabel = isApproved ? "Approved" : isRejected ? "Rejected" : isPending ? "Pending Review" : isExpired ? "Expired" : "Not Found";
+  const actionUrl = gate.line
+    ? `/gate/${encodeURIComponent(gate.line)}/${encodeURIComponent(gate.id)}?token=${encodeURIComponent(gate.token || "")}`
+    : `/gate/${encodeURIComponent(gate.id)}?token=${encodeURIComponent(gate.token || "")}`;
 
   return `<!doctype html>
 <html lang="en">
@@ -939,7 +1046,7 @@ function gateHtml(gate) {
   <div class="container">
     <div class="header">
       <div class="logo">chamber<span>.</span></div>
-      <div class="badge"><span class="dot"></span> ${statusLabel}</div>
+      <div class="badge"><span class="dot"></span> ${escapeHtml(statusLabel)}</div>
     </div>
 
     ${isNotFound ? `
@@ -948,17 +1055,19 @@ function gateHtml(gate) {
       </div>
     ` : `
       <div class="meta-box">
-        <div class="row"><span class="label">Gate ID</span><span class="val">${(gate.id || "").slice(0, 12)}…</span></div>
-        <div class="row"><span class="label">Action</span><span class="val">${gate.action || "approval-required"}</span></div>
-        ${gate.requestedBy ? `<div class="row"><span class="label">Requested By</span><span class="val">${gate.requestedBy}</span></div>` : ""}
+        <div class="row"><span class="label">Gate ID</span><span class="val">${escapeHtml((gate.id || "").slice(0, 12))}…</span></div>
+        <div class="row"><span class="label">Action</span><span class="val" id="val-action">${escapeHtml(gate.action || "approval-required")}</span></div>
+        <div class="row"><span class="label">Requested By</span><span class="val" id="val-requested-by">${escapeHtml(gate.requestedBy || "agent")}</span></div>
       </div>
 
       <div class="desc-title">Description</div>
-      <div class="desc-text">${gate.description || "Action requires explicit human review and authorization."}</div>
+      <div class="desc-text" id="val-desc">${escapeHtml(gate.description || "Action requires explicit human review and authorization.")}</div>
+
+      <div id="sealed-box" data-sealed="${escapeHtml(gate.sealed || "")}" style="display:none"></div>
 
       ${isPending ? `
-        <form method="POST" action="/gate/${gate.id}?token=${encodeURIComponent(gate.token || "")}">
-          <input type="hidden" name="token" value="${gate.token || ""}">
+        <form method="POST" action="${escapeHtml(actionUrl)}">
+          <input type="hidden" name="token" value="${escapeHtml(gate.token || "")}">
           <input type="hidden" name="approver" value="mobile-user">
           <div class="actions">
             <button type="submit" name="decision" value="approve" class="btn btn-approve">
@@ -972,13 +1081,42 @@ function gateHtml(gate) {
         <div class="notice">Remote authorization via E2EE Cloudflare Relay</div>
       ` : `
         <div class="resolved-box">
-          ${isApproved ? `✓ Action Approved${gate.approver ? " by " + gate.approver : ""}.<br><span style="font-size:12px;opacity:0.8;">The runner has been unblocked.</span>` : ""}
-          ${isRejected ? `✕ Action Rejected${gate.approver ? " by " + gate.approver : ""}.<br><span style="font-size:12px;opacity:0.8;">The runner will abort this task.</span>` : ""}
+          ${isApproved ? `✓ Action Approved${gate.approver ? " by " + escapeHtml(gate.approver) : ""}.<br><span style="font-size:12px;opacity:0.8;">The runner has been unblocked.</span>` : ""}
+          ${isRejected ? `✕ Action Rejected${gate.approver ? " by " + escapeHtml(gate.approver) : ""}.<br><span style="font-size:12px;opacity:0.8;">The runner will abort this task.</span>` : ""}
           ${isExpired ? `⏱ Gate Expired.<br><span style="font-size:12px;opacity:0.8;">This request timed out before review.</span>` : ""}
         </div>
       `}
     `}
   </div>
+  <script>
+  (async () => {
+    const hash = window.location.hash.slice(1);
+    const el = document.getElementById("sealed-box");
+    const sealed = el ? el.getAttribute("data-sealed") : null;
+    if (!hash || !sealed) return;
+    try {
+      const rawKey = Uint8Array.from(atob(hash.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+      const cryptoKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["decrypt"]);
+      const rawCipher = Uint8Array.from(atob(sealed.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+      const iv = rawCipher.slice(0, 12);
+      const data = rawCipher.slice(12);
+      const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, cryptoKey, data);
+      const parsed = JSON.parse(new TextDecoder().decode(decrypted));
+      if (parsed.action) {
+        const actEl = document.getElementById("val-action");
+        if (actEl) actEl.textContent = parsed.action;
+      }
+      if (parsed.description) {
+        const descEl = document.getElementById("val-desc");
+        if (descEl) descEl.textContent = parsed.description;
+      }
+      if (parsed.requestedBy) {
+        const reqEl = document.getElementById("val-requested-by");
+        if (reqEl) reqEl.textContent = parsed.requestedBy;
+      }
+    } catch {}
+  })();
+  </script>
 </body>
 </html>`;
 }

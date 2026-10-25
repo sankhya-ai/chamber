@@ -73,3 +73,23 @@ test("LineClient.syncHistory: fetches, decrypts, and passes opened messages", as
     globalThis.fetch = originalFetch;
   }
 });
+
+test("LineClient.syncHistory: includes member pass and owner headers for access control", async () => {
+  const invite = await Invite.create("https://relay.example.com").ready();
+  invite.pass = "member-pass-123";
+  let capturedHeaders = null;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => {
+    capturedHeaders = opts.headers;
+    return { ok: true, status: 200, json: async () => ({ head: 0, hasMore: false, messages: [] }) };
+  };
+  try {
+    const client = new LineClient(invite, "ashish/laptop");
+    await client.syncHistory();
+    assert.equal(capturedHeaders["x-chamber-pass"], "member-pass-123");
+    assert.equal(capturedHeaders["x-chamber-owner"], "ashish");
+    assert.ok(capturedHeaders["Authorization"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

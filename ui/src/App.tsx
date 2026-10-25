@@ -191,19 +191,52 @@ export function App() {
                   </button>
                 ) : null}
 
-                <button
-                  onClick={() => setAwayOpen(true)}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-colors",
-                    awayRunning
-                      ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                      : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground"
-                  )}
-                  title={awayRunning ? `Away mode: ${awayStatusText}` : "Click to set Away Mode"}
-                >
-                  <span className={cn("size-2 rounded-full", awayRunning ? "bg-amber-500 animate-pulse" : "bg-emerald-500")} />
-                  <span>{awayRunning ? "Away" : "Active"}</span>
-                </button>
+                {/* Real Agent & User Presence Strip */}
+                {(() => {
+                  const isConnected = Boolean(data?.connected);
+                  const onlineAgents = data?.workspaces.filter((w) => w.online).length ?? 0;
+                  const runningCards = data?.cards.filter((c) => c.status === "talking").length ?? 0;
+
+                  let dotClass = "bg-emerald-500";
+                  let label = "Online";
+                  let title = `Connected to Chamber relay as @${data?.me || "user"}. Click to set Away Mode.`;
+
+                  if (!isConnected) {
+                    dotClass = "bg-amber-500 animate-pulse";
+                    label = "Connecting…";
+                    title = "Connecting to Chamber relay… Click to check status.";
+                  } else if (awayRunning) {
+                    dotClass = "bg-amber-500 animate-pulse";
+                    label = "Away";
+                    title = `Away mode active: ${awayStatusText || "Agents auto-handling tasks"}. Click to configure.`;
+                  } else if (onlineAgents > 0) {
+                    dotClass = "bg-emerald-500";
+                    label = `${onlineAgents} ${onlineAgents === 1 ? "agent" : "agents"} · ${
+                      runningCards > 0 ? `${runningCards} running` : "idle"
+                    }`;
+                    title = `${onlineAgents} coding agent(s) active on this machine. Click to set Away Mode.`;
+                  } else {
+                    dotClass = "bg-emerald-500";
+                    label = "Online";
+                    title = `Connected to Chamber relay as @${data?.me || "user"}. No background agents running. Click to set Away Mode.`;
+                  }
+
+                  return (
+                    <button
+                      onClick={() => setAwayOpen(true)}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                        awayRunning || !isConnected
+                          ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                          : "border-border/60 bg-muted/40 text-foreground hover:bg-accent"
+                      )}
+                      title={title}
+                    >
+                      <span className={cn("size-2 rounded-full", dotClass)} />
+                      <span>{label}</span>
+                    </button>
+                  );
+                })()}
 
                 <div className={cn("flex rounded-md border p-0.5", route.view.kind !== "all" && "hidden")}>
                   {(["list", "board"] as const).map((l) => (
@@ -230,7 +263,15 @@ export function App() {
             {route.view.kind === "memory" ? (
               <MemoryView onTalk={(id) => go({ view: { kind: "all" }, talk: id })} />
             ) : (
-              <TalkList cards={cards} me={me} layout={route.view.kind === "inbox" ? "inbox" : route.view.kind === "all" ? layout : "list"} open={route.talk} onOpen={openTalk} empty={EMPTY[route.view.kind]} />
+              <TalkList
+                cards={cards}
+                me={me}
+                layout={route.view.kind === "inbox" ? "inbox" : route.view.kind === "all" ? layout : "list"}
+                open={route.talk}
+                onOpen={openTalk}
+                onDone={(id) => void api.markDone(id).then(refresh)}
+                empty={EMPTY[route.view.kind]}
+              />
             )}
 
             {here && !route.talk ? (
@@ -295,7 +336,7 @@ export function App() {
         />
       ) : null}
       <MembersDialog open={members} onOpenChange={setMembers} admin={data?.admin ?? false} me={me} data={data} onChanged={refresh} />
-      <GatesDialog open={gatesOpen} onOpenChange={setGatesOpen} onChanged={refresh} />
+      <GatesDialog open={gatesOpen} onOpenChange={setGatesOpen} me={me} onChanged={refresh} />
       <AwayDialog open={awayOpen} onOpenChange={setAwayOpen} me={me} onChanged={refresh} />
     </TooltipProvider>
   );

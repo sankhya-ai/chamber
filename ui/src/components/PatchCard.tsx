@@ -14,6 +14,9 @@ export function PatchCard({ patch, branch, title }: PatchCardProps) {
   const [verifying, setVerifying] = useState(false);
   const [verification, setVerification] = useState<{ appliesCleanly: boolean; stat: string; error?: string | null } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [applied, setApplied] = useState(false);
+  const [applyError, setApplyError] = useState("");
 
   const lines = patch.split("\n");
   const additions = lines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).length;
@@ -21,6 +24,7 @@ export function PatchCard({ patch, branch, title }: PatchCardProps) {
 
   const handleVerify = async () => {
     setVerifying(true);
+    setApplyError("");
     try {
       const res = await api.reviewPatch(patch);
       setVerification(res);
@@ -28,6 +32,23 @@ export function PatchCard({ patch, branch, title }: PatchCardProps) {
       setVerification({ appliesCleanly: false, stat: "", error: err?.message || "Verification failed" });
     } finally {
       setVerifying(false);
+    }
+  };
+
+  const handleApply = async () => {
+    setApplying(true);
+    setApplyError("");
+    try {
+      const res = await api.applyPatch(patch);
+      if (res.success) {
+        setApplied(true);
+      } else {
+        setApplyError(res.output || "Failed to apply");
+      }
+    } catch (err: any) {
+      setApplyError(err?.message || "Failed to apply patch");
+    } finally {
+      setApplying(false);
     }
   };
 
@@ -60,6 +81,22 @@ export function PatchCard({ patch, branch, title }: PatchCardProps) {
         </div>
 
         <div className="flex items-center gap-1.5">
+          {verification?.appliesCleanly && !applied ? (
+            <Button
+              size="sm"
+              disabled={applying}
+              onClick={handleApply}
+              className="h-6 px-2 text-[11px] gap-1 bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs"
+            >
+              <Check className="size-3" />
+              {applying ? "Applying..." : "Apply to Worktree"}
+            </Button>
+          ) : null}
+          {applied ? (
+            <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1 px-1">
+              <Check className="size-3" /> Applied
+            </span>
+          ) : null}
           <Button
             size="sm"
             variant="outline"
@@ -96,6 +133,12 @@ export function PatchCard({ patch, branch, title }: PatchCardProps) {
               : `✖ Conflict: ${verification.error || "Patch does not apply cleanly."}`}
           </span>
           {verification.stat ? <span className="font-mono text-[10px]">{verification.stat.trim()}</span> : null}
+        </div>
+      ) : null}
+
+      {applyError ? (
+        <div className="border-b px-3 py-1.5 text-[11px] bg-destructive/10 text-destructive font-mono">
+          {applyError}
         </div>
       ) : null}
 

@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Check, Folder, Hash, Inbox, Layers, Moon, Plus, Search, Shield, Sun, UserPlus, Users, X } from "lucide-react";
+import { BookOpen, Bot, Check, Folder, Hash, Inbox, Layers, Moon, Plus, Shield, Sun, UserPlus, Users, X } from "lucide-react";
 import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
@@ -15,7 +15,7 @@ interface Props {
   awayActive?: boolean;
   awayStatusText?: string;
   onView: (view: View) => void;
-  onSearch: () => void;
+  onSearch?: () => void;
   onNewChannel: () => void;
   onInvite: () => void;
   onMembers: () => void;
@@ -77,7 +77,7 @@ export function Sidebar({
   awayActive = false,
   awayStatusText = "",
   onView,
-  onSearch,
+  onSearch: _onSearch,
   onNewChannel,
   onInvite,
   onMembers,
@@ -118,12 +118,6 @@ export function Sidebar({
         </span>
         <span className={cn("size-2 rounded-full", data?.connected ? "bg-online" : "bg-waiting")} title={data?.connected ? "Connected" : data?.problem || "Connecting…"} />
       </div>
-
-      <button onClick={onSearch} className="mx-1 mb-2 flex h-7 items-center gap-2 rounded-md border bg-background/60 px-2 text-muted-foreground hover:text-foreground">
-        <Search className="size-3.5" />
-        <span className="flex-1 text-left text-xs">Search</span>
-        <kbd className="text-[11px]">⌘K</kbd>
-      </button>
 
       <nav className="scroll-thin flex-1 overflow-y-auto">
         <Row active={same(view, { kind: "inbox" })} onClick={() => onView({ kind: "inbox" })} end={waiting ? <Count n={waiting} /> : null}>
@@ -192,26 +186,50 @@ export function Sidebar({
             const v: View = p.path ? { kind: "project", path: p.path } : { kind: "agent", agent: p.agents[0].agent };
             const online = p.agents.some((a) => a.online);
             return (
-              <Row
+              <div
                 key={p.path || p.agents[0].agent}
-                active={same(view, v)}
+                role="button"
                 onClick={() => onView(v)}
-                end={p.path ? (
-                  <button aria-label="Remove from the chamber" title="Remove from the chamber" className="hidden size-5 items-center justify-center rounded text-muted-foreground group-hover:inline-flex hover:text-foreground" onClick={(e) => (e.stopPropagation(), void act(() => api.removeWorkspace(p.path), `${p.name} is out of the chamber.`))}>
-                    <X className="size-3" />
-                  </button>
-                ) : null}
+                className={cn(
+                  "group flex flex-col justify-center rounded-md px-2 py-1.5 cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground transition-colors",
+                  same(view, v) && "bg-accent font-medium text-foreground",
+                )}
               >
-                <Folder className={cn("size-3.5 shrink-0", online ? "text-online" : "text-muted-foreground/60")} />
-                <span className="truncate" title={p.path || undefined}>{p.path ? p.name : KIND[p.agents[0].kind] ?? p.name}</span>
-                <span className="ml-1 flex gap-0.5">
-                  {p.agents.map((a) => (
-                    <span key={a.agent} title={`${KIND[a.kind] ?? a.kind}${a.online ? " · connected" : " · not running"}`} className={cn("rounded px-1 text-[10px] leading-4", a.online ? "bg-online/15 text-online" : "bg-accent text-muted-foreground")}>
-                      {(KIND[a.kind] ?? a.kind).slice(0, 1)}
-                    </span>
-                  ))}
-                </span>
-              </Row>
+                <div className="flex items-center gap-2 w-full">
+                  <Folder className={cn("size-3.5 shrink-0", online ? "text-online" : "text-muted-foreground/60")} />
+                  <span className="truncate text-[13px] font-medium text-foreground min-w-0 flex-1" title={p.path || undefined}>
+                    {p.path ? p.name : KIND[p.agents[0].kind] ?? p.name}
+                  </span>
+                  {p.path ? (
+                    <button
+                      aria-label="Remove from the chamber"
+                      title="Remove from the chamber"
+                      className="hidden size-4 shrink-0 items-center justify-center rounded text-muted-foreground group-hover:inline-flex hover:text-foreground"
+                      onClick={(e) => (e.stopPropagation(), void act(() => api.removeWorkspace(p.path), `${p.name} is out of the chamber.`))}
+                    >
+                      <X className="size-3" />
+                    </button>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-1 pl-5.5 mt-1 flex-wrap">
+                  {p.agents.map((a) => {
+                    const kindLabel = KIND[a.kind] ?? a.kind;
+                    return (
+                      <span
+                        key={a.agent}
+                        title={`${kindLabel}${a.online ? " · connected" : " · not running"}`}
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium tracking-tight",
+                          a.online ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-semibold" : "bg-muted text-muted-foreground"
+                        )}
+                      >
+                        <span className={cn("size-1.5 rounded-full", a.online ? "bg-emerald-500" : "bg-muted-foreground/40")} />
+                        {kindLabel}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
             );
           })}
           {!(data?.projects ?? []).length && !awayActive ? <p className="px-2 text-muted-foreground">Add a project folder to put its coding agents in the chamber.</p> : null}

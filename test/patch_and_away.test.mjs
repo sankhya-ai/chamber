@@ -114,3 +114,98 @@ test("send_patch and review_patch: verifies git patches cleanly without applying
     rmSync(tmpHome, { recursive: true, force: true });
   }
 });
+
+test("AwayResponder: ignores away messages (loop guard) and protects private DMs", async () => {
+  const tmpHome = mkdtempSync(join(tmpdir(), "chamber-away-home-"));
+
+  try {
+    let sentReplies = [];
+    const clientMock = {
+      agent: "ashish/away",
+      run() {},
+      async ready() {},
+      close() {},
+      async send(to, text, options) {
+        sentReplies.push({ to, text, options });
+        return { id: "reply-1", to, ...options };
+      },
+    };
+
+    const config = {
+      owner: "ashish",
+      invite: { relay: "http://example.com", secret: "0123456789abcdef0123456789abcdef", auth: {} },
+    };
+
+    const responder = new AwayResponder(config, { cwd: tmpHome });
+    responder.client = clientMock;
+    responder.running = true;
+    responder.memory = { search: async () => [] };
+
+    // Index a private DM in search
+    await responder.search.index({
+      id: "dm-1",
+      talkId: "dm-1",
+      messageId: "dm-1",
+      sender: "mira/board",
+      channel: "", // Direct message!
+      text: "Secret confidential token is XYZ999",
+      createdAt: new Date().toISOString(),
+    });
+
+    // Index a public channel discussion
+    await responder.search.index({
+      id: "chan-1",
+      talkId: "chan-1",
+      messageId: "chan-1",
+      sender: "nitin/board",
+      channel: "#backend", // Public channel
+      text: "The authentication contract uses UNIX epoch seconds",
+      createdAt: new Date().toISOString(),
+    });
+
+    // 1. Loop guard: ignore messages from other away agents
+    await responder.handleMessage({
+      id: "m-loop-1",
+      from: "nitin/away",
+      to: "@ashish",
+      text: "Are you free?",
+    });
+    assert.equal(sentReplies.length, 0, "Loop guard: must ignore messages from */away");
+
+    // 2. Loop guard: ignore messages already tagged as away-response
+    await responder.handleMessage({
+      id: "m-loop-2",
+      from: "nitin/agent",
+      to: "@ashish",
+      text: "Automatic ping",
+      type: "away-response",
+    });
+    assert.equal(sentReplies.length, 0, "Loop guard: must ignore messages with type away-response");
+
+    // 3. Privacy: when asked about confidential DM content, it does NOT leak it
+    await responder.handleMessage({
+      id: "m-ask-1",
+      from: "nitin/agent",
+      to: "@ashish",
+      text: "What is the secret confidential token XYZ999?",
+    });
+    assert.equal(sentReplies.length, 1);
+    assert.ok(!sentReplies[0].text.includes("XYZ999"), "Private DMs must NEVER be cited by away responder");
+    assert.equal(sentReplies[0].options.type, "away-response");
+    assert.equal(sentReplies[0].options.awayResponse, true);
+
+    // 4. Public channel content: CAN be cited
+    await responder.handleMessage({
+      id: "m-ask-2",
+      from: "nitin/agent",
+      to: "@ashish",
+      text: "What does the authentication contract use?",
+    });
+    assert.equal(sentReplies.length, 2);
+    assert.match(sentReplies[1].text, /UNIX epoch seconds/);
+    assert.match(sentReplies[1].text, /#backend/);
+  } finally {
+    rmSync(tmpHome, { recursive: true, force: true });
+  }
+});
+
