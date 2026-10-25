@@ -98,6 +98,12 @@ export const api = {
   rejectCoordination: (id: string, reason?: string) =>
     post<{ task: CoordinationTask }>("/api/board/coordination", { action: "reject", id, reason }),
   quota: () => request<QuotaInfo>("/api/board/quota"),
+  joinOnboarding: (invite: string, as?: string, project?: string) =>
+    post<{ ok: boolean; owner: string; relay: string }>("/api/board/onboarding/join", { invite, as, project }),
+  newOnboarding: (relay: string, as?: string, project?: string) =>
+    post<{ ok: boolean; owner: string; relay: string; admin?: boolean }>("/api/board/onboarding/new", { relay, as, project }),
+  detectHarnesses: () =>
+    request<{ harnesses: Record<string, boolean>; project: string }>("/api/board/detect"),
 };
 
 export interface CoordinationTask {

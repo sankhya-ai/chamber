@@ -291,9 +291,9 @@ async function main() {
     }
     case "app":
     case "desktop": {
-      const config = needConfig();
+      const config = loadConfig();
       const project = positionals[0] ? resolve(positionals[0]) : gitTop();
-      if (project) {
+      if (project && config) {
         try {
           const { setup } = await import("../lib/setup.mjs");
           const register = !opts["no-register"] && !process.env.CHAMBER_NO_REGISTER;
@@ -335,7 +335,7 @@ async function main() {
     }
     case "board": {
       const { serveBoard } = await import("../lib/server.mjs");
-      return serveBoard(needConfig(), { port: Number(opts.port || 7878), open: !opts["no-open"] });
+      return serveBoard(loadConfig(), { port: Number(opts.port || 7878), open: !opts["no-open"] });
     }
     case "listen": {
       // For an agent driven from a terminal: connect, print the next message to it (JSON), leave.

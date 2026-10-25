@@ -1,6 +1,8 @@
 import { Cpu, LayoutGrid, List, Plus, Shield, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { AgentInspectorDialog } from "@/components/AgentInspectorDialog";
+import { AppTopChrome } from "@/components/AppTopChrome";
 import { AwayDialog } from "@/components/AwayDialog";
 import { CommandMenu } from "@/components/CommandMenu";
 import { Composer } from "@/components/Composer";
@@ -9,6 +11,7 @@ import { CoordinationDialog } from "@/components/CoordinationDialog";
 import { ChannelDialog, ChannelMembersDialog, InviteDialog, MembersDialog } from "@/components/Dialogs";
 import { GatesDialog } from "@/components/GatesDialog";
 import { MemoryView } from "@/components/MemoryView";
+import { OnboardingView } from "@/components/OnboardingView";
 import { SearchBar } from "@/components/SearchBar";
 import { Sidebar } from "@/components/Sidebar";
 import { TalkList } from "@/components/TalkList";
@@ -61,6 +64,7 @@ export function App() {
   const [channelPeople, setChannelPeople] = useState(false);
   const [gatesOpen, setGatesOpen] = useState(false);
   const [coordinationOpen, setCoordinationOpen] = useState(false);
+  const [agentsOpen, setAgentsOpen] = useState(false);
   const [awayOpen, setAwayOpen] = useState(false);
   const [pendingGatesCount, setPendingGatesCount] = useState(0);
   const [activeCoordinationCount, setActiveCoordinationCount] = useState(0);
@@ -171,23 +175,32 @@ export function App() {
   const here = addressFor(route.view);
 
   if (data && !data.configured) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="max-w-sm text-center">
-          <h1 className="text-lg font-semibold">Not in a chamber yet</h1>
-          <p className="mt-1 text-muted-foreground">Run the join command your chamber's admin sent you, then reload.</p>
-        </div>
-      </div>
-    );
+    return <OnboardingView onConfigured={refresh} />;
   }
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex h-full gap-2 p-2">
-        <Sidebar
+      <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
+        <AppTopChrome
           data={data}
-          view={route.view}
           dark={dark}
+          activeCoordinationCount={activeCoordinationCount}
+          pendingGatesCount={pendingGatesCount}
+          awayActive={awayRunning}
+          awayStatusText={awayStatusText}
+          onSearch={() => setMenu(true)}
+          onCoordination={() => setCoordinationOpen(true)}
+          onGates={() => setGatesOpen(true)}
+          onAway={() => setAwayOpen(true)}
+          onTheme={() => setDark((v) => !v)}
+          onOpenAgents={() => setAgentsOpen(true)}
+        />
+
+        <div className="flex min-h-0 flex-1 gap-2 p-2 overflow-hidden">
+          <Sidebar
+            data={data}
+            view={route.view}
+            dark={dark}
           pendingGatesCount={pendingGatesCount}
           activeCoordinationCount={activeCoordinationCount}
           awayActive={awayRunning}
@@ -353,6 +366,7 @@ export function App() {
           ) : null}
         </main>
       </div>
+    </div>
 
       <CommandMenu
         open={menu}
@@ -388,6 +402,7 @@ export function App() {
       <MembersDialog open={members} onOpenChange={setMembers} admin={data?.admin ?? false} me={me} data={data} onChanged={refresh} />
       <GatesDialog open={gatesOpen} onOpenChange={setGatesOpen} me={me} onChanged={refresh} />
       <CoordinationDialog open={coordinationOpen} onOpenChange={setCoordinationOpen} me={me} />
+      <AgentInspectorDialog open={agentsOpen} onOpenChange={setAgentsOpen} data={data} onChanged={refresh} />
       <AwayDialog open={awayOpen} onOpenChange={setAwayOpen} me={me} onChanged={refresh} />
     </TooltipProvider>
   );
