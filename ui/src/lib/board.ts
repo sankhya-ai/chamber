@@ -73,6 +73,7 @@ export interface BoardData {
   workspaces: Workspace[];
   projects: Project[];
   removed?: string[]; // names the admin removed from the chamber
+  quota?: import("./api").QuotaInfo | null;
   cards: Card[];
 }
 

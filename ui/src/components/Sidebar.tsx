@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Check, Folder, Hash, Inbox, Layers, Moon, Plus, Shield, Sun, UserPlus, Users, X } from "lucide-react";
+import { BookOpen, Bot, Check, Cpu, Folder, Hash, Inbox, Layers, Moon, Plus, Shield, Sun, UserPlus, Users, X } from "lucide-react";
 import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
@@ -12,6 +12,7 @@ interface Props {
   view: View;
   dark: boolean;
   pendingGatesCount?: number;
+  activeCoordinationCount?: number;
   awayActive?: boolean;
   awayStatusText?: string;
   onView: (view: View) => void;
@@ -20,6 +21,7 @@ interface Props {
   onInvite: () => void;
   onMembers: () => void;
   onGates?: () => void;
+  onCoordination?: () => void;
   onAway?: () => void;
   onTheme: () => void;
   onChanged: () => void;
@@ -74,6 +76,7 @@ export function Sidebar({
   view,
   dark,
   pendingGatesCount = 0,
+  activeCoordinationCount = 0,
   awayActive = false,
   awayStatusText = "",
   onView,
@@ -82,6 +85,7 @@ export function Sidebar({
   onInvite,
   onMembers,
   onGates,
+  onCoordination,
   onAway,
   onTheme,
   onChanged,
@@ -116,7 +120,22 @@ export function Sidebar({
         <span className="flex items-baseline gap-1 text-[17px] font-semibold tracking-tight">
           chamber<span className="inline-block size-1.5 rounded-full bg-dot" />
         </span>
-        <span className={cn("size-2 rounded-full", data?.connected ? "bg-online" : "bg-waiting")} title={data?.connected ? "Connected" : data?.problem || "Connecting…"} />
+        <div className="flex items-center gap-1.5">
+          {data?.quota ? (
+            <span
+              className={cn(
+                "rounded px-1.5 py-0.5 text-[10px] font-medium tracking-tight",
+                data.quota.warning
+                  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                  : "bg-muted text-muted-foreground"
+              )}
+              title={`Cloudflare DO Daily Quota: ${data.quota.dailyRequests.toLocaleString()} / ${data.quota.dailyRequestsLimit.toLocaleString()} requests (${data.quota.requestsPercentage}%)`}
+            >
+              CF {data.quota.requestsPercentage}%
+            </span>
+          ) : null}
+          <span className={cn("size-2 rounded-full", data?.connected ? "bg-online" : "bg-waiting")} title={data?.connected ? "Connected" : data?.problem || "Connecting…"} />
+        </div>
       </div>
 
       <nav className="scroll-thin flex-1 overflow-y-auto">
@@ -125,6 +144,19 @@ export function Sidebar({
         </Row>
         <Row active={same(view, { kind: "all" })} onClick={() => onView({ kind: "all" })}>
           <Layers className="size-4" /> All talks
+        </Row>
+        <Row
+          active={false}
+          onClick={() => onCoordination?.()}
+          end={
+            activeCoordinationCount > 0 ? (
+              <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-violet-600 px-1 text-[10px] font-semibold text-white">
+                {activeCoordinationCount}
+              </span>
+            ) : null
+          }
+        >
+          <Cpu className="size-4 text-violet-500" /> Agent Tasks
         </Row>
         <Row
           active={false}
@@ -241,7 +273,7 @@ export function Sidebar({
       <div className="flex items-center gap-1 border-t px-1 pt-2">
         {naming === null ? (
           <button onClick={() => setNaming(me)} title="Your name: teammates reach you as @name. Click to change." className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-accent">
-            <Avatar name={me || "?"} size={20} />
+            <Avatar name={me || "?"} size={20} online={data?.connected ?? true} />
             <span className="truncate text-xs">@{me}</span>
           </button>
         ) : (

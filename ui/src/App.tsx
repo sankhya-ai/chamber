@@ -1,13 +1,17 @@
-import { LayoutGrid, List, Plus, Shield, Users } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Cpu, LayoutGrid, List, Plus, Shield, Users } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { AgentInspectorDialog } from "@/components/AgentInspectorDialog";
+import { AppTopChrome } from "@/components/AppTopChrome";
 import { AwayDialog } from "@/components/AwayDialog";
 import { CommandMenu } from "@/components/CommandMenu";
 import { Composer } from "@/components/Composer";
 import { Conversation } from "@/components/Conversation";
+import { CoordinationDialog } from "@/components/CoordinationDialog";
 import { ChannelDialog, ChannelMembersDialog, InviteDialog, MembersDialog } from "@/components/Dialogs";
 import { GatesDialog } from "@/components/GatesDialog";
 import { MemoryView } from "@/components/MemoryView";
+import { OnboardingView } from "@/components/OnboardingView";
 import { SearchBar } from "@/components/SearchBar";
 import { Sidebar } from "@/components/Sidebar";
 import { TalkList } from "@/components/TalkList";
@@ -59,8 +63,11 @@ export function App() {
   const [members, setMembers] = useState(false);
   const [channelPeople, setChannelPeople] = useState(false);
   const [gatesOpen, setGatesOpen] = useState(false);
+  const [coordinationOpen, setCoordinationOpen] = useState(false);
+  const [agentsOpen, setAgentsOpen] = useState(false);
   const [awayOpen, setAwayOpen] = useState(false);
   const [pendingGatesCount, setPendingGatesCount] = useState(0);
+  const [activeCoordinationCount, setActiveCoordinationCount] = useState(0);
   const [awayRunning, setAwayRunning] = useState(false);
   const [awayStatusText, setAwayStatusText] = useState("");
 
@@ -78,6 +85,13 @@ export function App() {
       (res) => setPendingGatesCount((res.gates || []).filter((g) => g.status === "pending").length),
       () => undefined
     );
+    api.coordinationTasks().then(
+      (res) => {
+        const count = (res.tasks || []).filter((t) => t.status === "requested" || t.status === "claimed" || t.status === "in_progress").length;
+        setActiveCoordinationCount(count);
+      },
+      () => undefined
+    );
     api.awayStatus().then(
       (res) => {
         setAwayRunning(Boolean(res.running));
@@ -86,6 +100,33 @@ export function App() {
       () => undefined
     );
   }, []);
+
+  // Desktop notifications when app is in background
+  useEffect(() => {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
+
+  const prevUnreadRef = useRef<number>(0);
+  useEffect(() => {
+    if (!data) return;
+    const totalUnread = data.cards.filter((c) => c.unread).length;
+    if (
+      typeof Notification !== "undefined" &&
+      Notification.permission === "granted" &&
+      document.hidden &&
+      totalUnread > prevUnreadRef.current
+    ) {
+      const latest = data.cards.find((c) => c.unread);
+      if (latest) {
+        new Notification(`Chamber: ${latest.title}`, {
+          body: `${latest.last?.from || "Teammate"}: ${latest.last?.text || "New message"}`,
+        });
+      }
+    }
+    prevUnreadRef.current = totalUnread;
+  }, [data]);
 
   useEffect(() => {
     refresh();
@@ -134,24 +175,34 @@ export function App() {
   const here = addressFor(route.view);
 
   if (data && !data.configured) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="max-w-sm text-center">
-          <h1 className="text-lg font-semibold">Not in a chamber yet</h1>
-          <p className="mt-1 text-muted-foreground">Run the join command your chamber's admin sent you, then reload.</p>
-        </div>
-      </div>
-    );
+    return <OnboardingView onConfigured={refresh} />;
   }
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex h-full gap-2 p-2">
-        <Sidebar
+      <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
+        <AppTopChrome
           data={data}
-          view={route.view}
           dark={dark}
+          activeCoordinationCount={activeCoordinationCount}
           pendingGatesCount={pendingGatesCount}
+          awayActive={awayRunning}
+          awayStatusText={awayStatusText}
+          onSearch={() => setMenu(true)}
+          onCoordination={() => setCoordinationOpen(true)}
+          onGates={() => setGatesOpen(true)}
+          onAway={() => setAwayOpen(true)}
+          onTheme={() => setDark((v) => !v)}
+          onOpenAgents={() => setAgentsOpen(true)}
+        />
+
+        <div className="flex min-h-0 flex-1 gap-2 p-2 overflow-hidden">
+          <Sidebar
+            data={data}
+            view={route.view}
+            dark={dark}
+          pendingGatesCount={pendingGatesCount}
+          activeCoordinationCount={activeCoordinationCount}
           awayActive={awayRunning}
           awayStatusText={awayStatusText}
           onView={openView}
@@ -160,6 +211,7 @@ export function App() {
           onInvite={() => setInvite(true)}
           onMembers={() => setMembers(true)}
           onGates={() => setGatesOpen(true)}
+          onCoordination={() => setCoordinationOpen(true)}
           onAway={() => setAwayOpen(true)}
           onTheme={() => setDark((v) => !v)}
           onChanged={refresh}
@@ -179,6 +231,17 @@ export function App() {
 
               <div className="ml-auto flex items-center gap-2">
                 <SearchBar onOpenTalk={(id) => go({ view: { kind: "all" }, talk: id })} />
+
+                {activeCoordinationCount > 0 ? (
+                  <button
+                    onClick={() => setCoordinationOpen(true)}
+                    className="flex items-center gap-1.5 rounded-md border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-xs font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-500/20"
+                    title="Review active agent coordination tasks"
+                  >
+                    <Cpu className="size-3.5 text-violet-500" />
+                    <span>{activeCoordinationCount} Task{activeCoordinationCount === 1 ? "" : "s"}</span>
+                  </button>
+                ) : null}
 
                 {pendingGatesCount > 0 ? (
                   <button
@@ -303,6 +366,7 @@ export function App() {
           ) : null}
         </main>
       </div>
+    </div>
 
       <CommandMenu
         open={menu}
@@ -337,6 +401,8 @@ export function App() {
       ) : null}
       <MembersDialog open={members} onOpenChange={setMembers} admin={data?.admin ?? false} me={me} data={data} onChanged={refresh} />
       <GatesDialog open={gatesOpen} onOpenChange={setGatesOpen} me={me} onChanged={refresh} />
+      <CoordinationDialog open={coordinationOpen} onOpenChange={setCoordinationOpen} me={me} />
+      <AgentInspectorDialog open={agentsOpen} onOpenChange={setAgentsOpen} data={data} onChanged={refresh} />
       <AwayDialog open={awayOpen} onOpenChange={setAwayOpen} me={me} onChanged={refresh} />
     </TooltipProvider>
   );

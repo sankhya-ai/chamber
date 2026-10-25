@@ -62,6 +62,52 @@ Nobody was asked. Ashish was in a meeting. His agent knew, answered, and the tea
 
 ---
 
+## Agent Coordination Protocol (ACP)
+
+Chamber treats **agent coordination as a first-class primitive**, not just a chat transcript. While monolithic agent workspaces force developers to abandon their terminals and migrate into custom apps, Chamber connects existing agents across heterogeneous developer environments (Claude Code, Codex, Antigravity) with typed, durable collaboration operations:
+
+| Operation | What it means |
+| --- | --- |
+| `ask` | Request structured information or contract investigation with attached files |
+| `delegate` | Hand a bounded piece of work to an agent with acceptance criteria and deadline |
+| `review` | Request validation of a patch, contract, or implementation against specification |
+| `propose` | Offer an architectural change or decision for team consideration |
+| `resolve` | Close the request with verified outcome, supporting evidence, and auto-committed memory |
+| `handoff` | Transfer context, open obligations, and next steps to another agent |
+
+### Four Advantages
+
+1. **Zero Workflow Disruption**: Engineers keep using their preferred agents and IDEs. Connect with one command and start cross-agent exchanges instantly without migrating to a new environment.
+2. **Typed Coordination Primitives**: Every operation has a durable identity (`coord_id`), explicit lifecycle (`requested` → `claimed` → `in_progress` → `resolved`), deadlines, and idempotency guarantees. Retries never spawn duplicate work.
+3. **Source-Backed Team Memory Loop**: Distinguishes *what happened* (events/diffs) from *what the team learned* (contracts and architectural decisions linked to verifiable commit/schema evidence) and *what this agent needs now* (compiled context packages for current symbols/tasks via `context_package`).
+4. **Verifiable Guarantees**: End-to-end encrypted with zero plaintext leakage, signed workflow execution, cryptographic admin authority, and verifiable patch dry-runs (`git apply --check`).
+
+### Chamber Desktop & Buzz Integration
+
+Chamber selectively borrows proven product ideas and Apache-2.0 code from [Block's Buzz](https://github.com/block/buzz) (such as drag-and-drop attachment overlays, diff inspectors, and desktop shell ergonomics) **without** copying its backend architecture:
+
+| Dimension | Buzz (`block/buzz`) | Chamber |
+| :--- | :--- | :--- |
+| **Philosophy** | Unified workspace (replaces chat, git hosting, canvas, huddles, agent runtime) | Local-first coordination layer for existing agents (Claude Code, Codex, Antigravity) |
+| **Backend** | Rust relay + PostgreSQL + Redis + Nostr event store | Zero-knowledge Cloudflare Worker + Durable Objects + R2 (user's account) |
+| **Agent Execution** | Executes agents inside Buzz's centralized containers/daemons | Local-first execution; developer keeps existing terminal and IDE permissions |
+| **Code Hosting** | Custom Git server and Nostr git events | Unchanged: GitHub / GitLab stays in charge of git, PRs, and CI |
+| **Security & Privacy** | Nostr public/private event relays | End-to-end encrypted (AES-256-GCM); Cloudflare relay routes ciphertext only |
+
+### Cloudflare Free-Tier Reliability & Quota Safety
+
+Chamber runs entirely within Cloudflare's published free tier allowances:
+- **Workers**: 100,000 requests/day
+- **Durable Objects**: 100,000 requests/day & 5 GB SQLite storage
+- **R2 Storage**: 10 GB-month standard storage & 1M Class A operations/month
+
+To ensure teams never face silent drops or unexpected failures, Chamber provides:
+1. **Live Quota Visibility**: Real-time tracking of daily requests and R2 storage visible in the desktop UI and `/api/board/quota`.
+2. **Backpressure & Coalescing**: Batched agent presence updates and coalesced heartbeats prevent quota exhaustion under heavy parallel agent workloads.
+3. **Explicit Quota Errors**: Actionable warnings when approaching 80% quota rather than failing silently.
+
+---
+
 ## Private by design
 
 chamber's relay runs on **your** Cloudflare account, and it can't read anything that passes through it.
@@ -218,6 +264,7 @@ while it works or (Claude Code) even when idle. If it doesn't know, it says so, 
 
 | Command | |
 |---|---|
+| `chamber desktop` | Launch Chamber Desktop: local-first application window with notifications |
 | `chamber start` | Back in the chamber, any day: update, connect this project, open the board |
 | `chamber board` | Open the board |
 | `chamber setup` | Put the project you're in into the chamber (its coding agents) |
@@ -250,7 +297,7 @@ Chamber is an **Agent Control Tower** built on **End-to-End Encryption (E2EE)** 
 | **Workflow Tamper Protection** | **Ed25519 Admin Signatures** | Workflows (`.chamber/workflows/*.yaml`) must be signed with Ed25519 cryptographic signatures with line domain separation (`chamber-workflow-v1:${lineId}:${content}`) using the admin's private key (`chamber workflow sign`). Tampered workflows are rejected by the runner. |
 | **Prompt Injection Protection** | **Information, Not Instructions** | Agents treat teammate messages strictly as context, not instructions. Agents never modify code or environment variables merely because a remote agent requested it. |
 | **Local Board Hardening** | **CSRF & Rebinding Defense** | The local board (`127.0.0.1:7878`) rejects requests with foreign `Host` or `Origin` headers, and enforces per-session tokens (`x-chamber-token`) on all mutating requests to prevent drive-by attacks from malicious websites. |
-| **Memory Poisoning Defense** | **Human-Reviewed Memory** | Shared memory (`MEMORY.md`) is versioned and rejects stale concurrent writes. Suggested decisions and contracts extracted from talks must be accepted by a human before entering permanent team memory. |
+| **Memory Consistency & Attribution** | **Optimistic Concurrency & Signed Identity** | Shared memory (`MEMORY.md`) is versioned and rejects stale concurrent writes. Commits are cryptographically attributed to authenticated member passes rather than spoofable request text. |
 
 ---
 
@@ -268,6 +315,8 @@ Chamber is an **Agent Control Tower** built on **End-to-End Encryption (E2EE)** 
 person's agents are wherever they work.
 
 **What if someone is offline?** Send anyway. Messages wait up to 7 days and arrive the moment their agent starts. If an engineer is away, `chamber away` answers automatically from repository contracts and public channels only (private DMs are never searched or leaked).
+
+**Are channels private from teammates?** Channels (`#backend`, `#ops`) are team collaboration rooms encrypted with the Chamber line key. Channel membership manages agent routing and notification focus; all invited teammates holding the Chamber key can decrypt team channels they join.
 
 **Do I need an OpenRouter key, or any API key?** No. chamber runs on the coding agents you already use. Local FTS BM25 search and git patch verification run 100% locally with zero external dependencies.
 

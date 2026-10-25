@@ -1,4 +1,4 @@
-import { ArrowUp, FileText, Paperclip, X } from "lucide-react";
+import { ArrowUp, FileText, Paperclip, UploadCloud, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { type AttachedFile } from "@/lib/api";
@@ -14,6 +14,17 @@ function formatSize(bytes?: number): string {
 interface StagedAttachment extends AttachedFile {
   previewUrl?: string;
   isImage?: boolean;
+}
+
+function DropZoneOverlay() {
+  return (
+    <div className="pointer-events-none absolute inset-x-4 inset-y-0 z-20 flex items-center justify-center rounded-xl border-2 border-dashed border-primary bg-primary/10 backdrop-blur-[1px] animate-in fade-in duration-150">
+      <span className="flex items-center gap-2 rounded-full bg-foreground px-4 py-2 text-xs font-semibold text-background shadow-md">
+        <UploadCloud aria-hidden="true" className="size-4" />
+        <span>Drop files to attach</span>
+      </span>
+    </div>
+  );
 }
 
 /** Slack & Buzz-style composer: Enter sends, Shift+Enter is a new line, "@" mentions, file attachments & paste. */
@@ -152,8 +163,10 @@ export function Composer({
         if (e.dataTransfer.files) void processFiles(e.dataTransfer.files);
       }}
     >
+      {dragging ? <DropZoneOverlay /> : null}
+
       {matches.length ? (
-        <div className="absolute bottom-full left-4 mb-1 w-56 overflow-hidden rounded-lg border bg-popover p-1 shadow-md">
+        <div className="absolute bottom-full left-4 mb-1 w-56 overflow-hidden rounded-lg border bg-popover p-1 shadow-md z-30">
           {matches.map((p, i) => (
             <button
               key={p}
@@ -178,21 +191,22 @@ export function Composer({
             {attachments.map((file, i) => (
               <div
                 key={`${file.name}-${i}`}
-                className="group relative flex items-center gap-1.5 rounded-lg border bg-muted/60 py-1 pl-1.5 pr-2 text-xs"
+                className="group relative flex items-center gap-1.5 rounded-lg border bg-muted/60 py-1 pl-1.5 pr-2 text-xs shadow-2xs hover:bg-muted transition-colors"
               >
                 {file.isImage && file.previewUrl ? (
-                  <img src={file.previewUrl} alt={file.name} className="size-6 rounded object-cover" />
+                  <img src={file.previewUrl} alt={file.name} className="size-6 rounded object-cover border" />
                 ) : (
                   <FileText className="size-4 text-muted-foreground" />
                 )}
-                <span className="max-w-[120px] truncate font-medium text-foreground">{file.name}</span>
+                <span className="max-w-[140px] truncate font-medium text-foreground">{file.name}</span>
                 <span className="text-[10px] text-muted-foreground">({formatSize(file.size)})</span>
                 <button
                   type="button"
                   onClick={() => removeAttachment(i)}
-                  className="ml-1 rounded-full p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+                  title={`Remove ${file.name}`}
+                  className="ml-1 flex size-4 items-center justify-center rounded-full bg-muted-foreground/15 text-muted-foreground hover:bg-destructive hover:text-destructive-foreground transition-colors"
                 >
-                  <X className="size-3" />
+                  <X className="size-2.5" />
                 </button>
               </div>
             ))}

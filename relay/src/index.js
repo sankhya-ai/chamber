@@ -50,6 +50,7 @@ const LINE = /^[0-9a-f]{32}$/;
 const CHANNEL = /^#[a-z0-9][a-z0-9_-]{0,39}$/;
 const OWNER = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 const BLOB = /^[0-9a-f]{32}$/;
+const MSG_ID = /^[0-9a-f]{32}$/;
 const MAX_BLOB = 25 * 1024 * 1024;
 const IDLE_WIPE_MS = 10 * 60 * 1000;
 const MAX_MEMORY_FILE = 400_000; // sealed, base64
@@ -107,7 +108,7 @@ export default {
     const config = await relayConfig(env);
     const allowed = config.lines;
     if (allowed.length && !allowed.includes(line)) return json({ error: "this relay serves only its own chambers" }, 403);
-    if (blob !== undefined) return blobs(request, env, line, blob);
+    if (blob !== undefined) return blobs(request, env, line, blob, config);
     if (what === "ws" && request.headers.get("upgrade") !== "websocket") return json({ error: "expected a WebSocket" }, 426);
     const stub = env.LINES.get(env.LINES.idFromName(line));
     const forwarded = new Request(`https://line/${what}${url.search}`, request);
@@ -174,9 +175,16 @@ function landing(url, config) {
   );
 }
 
-async function blobs(request, env, line, blob) {
+async function blobs(request, env, line, blob, config = null) {
   if (!env.BLOBS) return json({ error: "this relay has no file storage; send smaller files" }, 501);
   if (!BLOB.test(blob)) return json({ error: "bad blob id" }, 400);
+  if (config?.adminKey) {
+    const pass = request.headers.get("x-chamber-pass");
+    if (pass) {
+      const claims = await signedByAdmin(config.adminKey, pass);
+      if (!claims || claims.line !== line) return json({ error: "invalid pass" }, 403);
+    }
+  }
   const key = `${line}/${blob}`;
   if (request.method === "PUT") {
     const size = Number(request.headers.get("content-length") || 0);
@@ -240,6 +248,48 @@ export class Line {
     )`);
     const gateColumns = this.sql.exec("PRAGMA table_info(gates)").toArray().map((c) => c.name);
     if (!gateColumns.includes("sealed")) this.sql.exec("ALTER TABLE gates ADD COLUMN sealed TEXT NOT NULL DEFAULT ''");
+    // Cloudflare Free-Tier Quota & Usage Safety Tracking
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS usage_stats (
+      day TEXT PRIMARY KEY,
+      daily_requests INTEGER NOT NULL DEFAULT 0,
+      messages_count INTEGER NOT NULL DEFAULT 0,
+      blobs_bytes INTEGER NOT NULL DEFAULT 0,
+      last_ts INTEGER NOT NULL
+    )`);
+  }
+
+  recordUsage(requests = 1, messages = 0, blobBytes = 0) {
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      const now = Date.now();
+      this.sql.exec(`INSERT INTO usage_stats (day, daily_requests, messages_count, blobs_bytes, last_ts)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (day) DO UPDATE SET
+          daily_requests = daily_requests + excluded.daily_requests,
+          messages_count = messages_count + excluded.messages_count,
+          blobs_bytes = blobs_bytes + excluded.blobs_bytes,
+          last_ts = excluded.last_ts`, day, requests, messages, blobBytes, now);
+    } catch {}
+  }
+
+  quota() {
+    const day = new Date().toISOString().slice(0, 10);
+    const row = this.sql.exec("SELECT daily_requests, messages_count, blobs_bytes FROM usage_stats WHERE day = ?", day).toArray()[0] || { daily_requests: 0, messages_count: 0, blobs_bytes: 0 };
+    const dailyRequests = Number(row.daily_requests || 0);
+    const dailyLimit = 100_000;
+    const r2Bytes = Number(row.blobs_bytes || 0);
+    const r2LimitBytes = 10 * 1024 * 1024 * 1024; // 10 GB
+    const warning = dailyRequests > 80_000 || r2Bytes > 8 * 1024 * 1024 * 1024;
+    return {
+      day,
+      dailyRequests,
+      dailyRequestsLimit: dailyLimit,
+      requestsPercentage: Math.round((dailyRequests / dailyLimit) * 1000) / 10,
+      r2StorageBytes: r2Bytes,
+      r2StorageLimitBytes: r2LimitBytes,
+      warning,
+      status: warning ? "warning" : "healthy",
+    };
   }
 
   // ----- channels ---------------------------------------------------------------
@@ -310,6 +360,8 @@ export class Line {
       this.line = line;
       await this.ctx.storage.put("line", line); // the alarm may wake in a fresh instance
     }
+    this.recordUsage(1);
+    if (what === "quota" || what === "stats") return json(this.quota());
     if (what === "roster") return json({ agents: this.roster() });
     if (what === "members") {
       const online = new Set(this.roster().map((w) => w.owner));
@@ -334,7 +386,7 @@ export class Line {
           owner = row?.owner ?? null;
         }
       }
-      if (!owner) {
+      if (!adminKey && !owner) {
         const asHeader = request.headers.get("x-chamber-owner") || new URL(request.url).searchParams.get("as");
         if (asHeader && OWNER.test(asHeader)) owner = asHeader.toLowerCase();
       }
@@ -369,6 +421,25 @@ export class Line {
       });
     }
     if (what === "restart") {
+      if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+      const adminKey = await this.adminKey();
+      if (adminKey) {
+        const order = request.headers.get("x-chamber-order");
+        const pass = request.headers.get("x-chamber-pass");
+        let authorized = false;
+        if (order) {
+          const claims = await signedByAdmin(adminKey, order);
+          if (claims?.op === "restart" || claims?.admin) authorized = true;
+        }
+        if (!authorized && pass) {
+          const claims = await signedByAdmin(adminKey, pass);
+          const lineId = this.line || (await this.ctx.storage.get("line"));
+          if (claims?.member && claims.line === lineId && !this.sql.exec("SELECT 1 FROM revoked WHERE member = ?", claims.member).toArray().length) {
+            authorized = true;
+          }
+        }
+        if (!authorized) return json({ error: "restart requires admin authorization" }, 403);
+      }
       // After a deploy: a busy chamber keeps running the old code until it restarts. Its
       // clients reconnect at once and get the new code.
       setTimeout(() => this.ctx.abort("the relay was updated"), 50);
@@ -470,7 +541,16 @@ export class Line {
     const count = this.sql.exec("SELECT COUNT(*) AS n FROM mem_files").toArray()[0]?.n ?? 0;
     if (count + changes.filter((c) => c.body !== null && !Number(c.base)).length > MAX_MEMORY_FILES) return json({ error: "memory is full" }, 413);
     const now = Date.now();
-    const author = String(commit.author || "").slice(0, 80);
+    let author = String(commit.author || "").slice(0, 80);
+    const adminKey = await this.adminKey();
+    const pass = request.headers.get("x-chamber-pass");
+    if (adminKey && pass) {
+      const claims = await signedByAdmin(adminKey, pass);
+      if (claims?.member) {
+        const row = this.sql.exec("SELECT owner FROM names WHERE member = ?", claims.member).toArray()[0];
+        if (row?.owner) author = row.owner;
+      }
+    }
     const applied = [];
     for (const c of changes) {
       const highest = this.sql.exec("SELECT MAX(version) AS v FROM mem_versions WHERE path = ?", c.path).toArray()[0]?.v ?? 0;
@@ -618,10 +698,13 @@ export class Line {
   }
 
   deliver(ws, who, frame) {
-    const id = String(frame.id || "").slice(0, 64);
+    const id = String(frame.id || "");
+    const replyTo = frame.reply_to ? String(frame.reply_to) : null;
+    if (!MSG_ID.test(id)) return this.send(ws, JSON.stringify({ t: "error", error: "message id must be 32 hex chars", id }));
+    if (replyTo && !MSG_ID.test(replyTo)) return this.send(ws, JSON.stringify({ t: "error", error: "reply_to must be 32 hex chars", id }));
     const to = String(frame.to || "").toLowerCase();
     const body = String(frame.body || "");
-    if (!id || !body) return this.send(ws, JSON.stringify({ t: "error", error: "a message needs an id and a body", id }));
+    if (!body) return this.send(ws, JSON.stringify({ t: "error", error: "a message needs an id and a body", id }));
     if (body.length > MAX_BODY) return this.send(ws, JSON.stringify({ t: "error", error: "message too large", id }));
     let toAgent = null;
     let toOwner = null;
@@ -695,7 +778,7 @@ export class Line {
     if (request.method === "POST" && (!gateId || sub === "register" || !sub && request.headers.get("content-type")?.includes("application/json"))) {
       const body = await request.clone().json().catch(() => ({}));
       const id = gateId || body.id;
-      if (id && (body.action || body.description || body.sealed)) {
+      if (id && (body.sealed || body.action || body.description)) {
         const row = this.sql.exec("SELECT * FROM gates WHERE id = ?", id).toArray()[0] ?? null;
         if (row) {
           if (body.token && row.token !== body.token) return json({ error: "gate already exists" }, 409);
@@ -704,14 +787,11 @@ export class Line {
         const expiresAt = body.expiresAt || (Date.now() + (Number(body.expiresMinutes) || 60) * 60 * 1000);
         this.sql.exec(
           `INSERT INTO gates (id, token, line, sealed, description, action, requestedBy, status, createdAt, expiresAt)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+           VALUES (?, ?, ?, ?, '', '', '', 'pending', ?, ?)`,
           id,
           body.token || token,
           body.line || this.line || "",
           body.sealed || "",
-          body.description || "",
-          body.action || "action",
-          body.requestedBy || "agent",
           Date.now(),
           expiresAt
         );
@@ -826,7 +906,8 @@ export class Line {
     const line = this.line || (await this.ctx.storage.get("line"));
     if (this.members().length > 0 || !this.env.BLOBS || !line) return;
     const keep = new Set();
-    for (const row of this.sql.exec("SELECT blobs FROM messages WHERE delivered = 0 AND blobs != ''").toArray()) {
+    const cutoff = Date.now() - (Number(this.env.BLOB_RETENTION_HOURS || 24) * 3600 * 1000);
+    for (const row of this.sql.exec("SELECT blobs FROM messages WHERE (delivered = 0 OR ts > ?) AND blobs != ''", cutoff).toArray()) {
       for (const blob of row.blobs.split(",")) keep.add(`${line}/${blob}`);
     }
     let cursor;
@@ -1056,12 +1137,12 @@ function gateHtml(gate) {
     ` : `
       <div class="meta-box">
         <div class="row"><span class="label">Gate ID</span><span class="val">${escapeHtml((gate.id || "").slice(0, 12))}…</span></div>
-        <div class="row"><span class="label">Action</span><span class="val" id="val-action">${escapeHtml(gate.action || "approval-required")}</span></div>
-        <div class="row"><span class="label">Requested By</span><span class="val" id="val-requested-by">${escapeHtml(gate.requestedBy || "agent")}</span></div>
+        <div class="row"><span class="label">Action</span><span class="val" id="val-action">🔒 Encrypted Action</span></div>
+        <div class="row"><span class="label">Requested By</span><span class="val" id="val-requested-by">🔒 Encrypted</span></div>
       </div>
 
       <div class="desc-title">Description</div>
-      <div class="desc-text" id="val-desc">${escapeHtml(gate.description || "Action requires explicit human review and authorization.")}</div>
+      <div class="desc-text" id="val-desc">Decrypting details locally with key from URL fragment…</div>
 
       <div id="sealed-box" data-sealed="${escapeHtml(gate.sealed || "")}" style="display:none"></div>
 
@@ -1093,7 +1174,11 @@ function gateHtml(gate) {
     const hash = window.location.hash.slice(1);
     const el = document.getElementById("sealed-box");
     const sealed = el ? el.getAttribute("data-sealed") : null;
-    if (!hash || !sealed) return;
+    if (!hash || !sealed) {
+      const descEl = document.getElementById("val-desc");
+      if (descEl) descEl.textContent = "🔒 Encrypted gate: decryption key required in link hash (#<key>).";
+      return;
+    }
     try {
       const rawKey = Uint8Array.from(atob(hash.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
       const cryptoKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["decrypt"]);
@@ -1114,7 +1199,10 @@ function gateHtml(gate) {
         const reqEl = document.getElementById("val-requested-by");
         if (reqEl) reqEl.textContent = parsed.requestedBy;
       }
-    } catch {}
+    } catch {
+      const descEl = document.getElementById("val-desc");
+      if (descEl) descEl.textContent = "🔒 Could not decrypt gate payload with the provided key.";
+    }
   })();
   </script>
 </body>

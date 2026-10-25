@@ -89,7 +89,53 @@ export const api = {
     post<{ appliesCleanly: boolean; stat: string; error?: string | null }>("/api/board/review_patch", { patch, workspacePath }),
   applyPatch: (patch: string, workspacePath?: string) =>
     post<{ success: boolean; output: string }>("/api/board/apply_patch", { patch, workspacePath }),
+  coordinationTasks: (status?: string, op?: string) =>
+    request<{ tasks: CoordinationTask[] }>(`/api/board/coordination${status || op ? `?${status ? `status=${encodeURIComponent(status)}&` : ""}${op ? `op=${encodeURIComponent(op)}` : ""}` : ""}`),
+  claimCoordination: (id: string, agent?: string) =>
+    post<{ task: CoordinationTask }>("/api/board/coordination", { action: "claim", id, agent }),
+  resolveCoordination: (id: string, resolution: string, evidence?: any, contract?: string) =>
+    post<{ task: CoordinationTask }>("/api/board/coordination", { action: "resolve", id, resolution, evidence, contract }),
+  rejectCoordination: (id: string, reason?: string) =>
+    post<{ task: CoordinationTask }>("/api/board/coordination", { action: "reject", id, reason }),
+  quota: () => request<QuotaInfo>("/api/board/quota"),
+  joinOnboarding: (invite: string, as?: string, project?: string) =>
+    post<{ ok: boolean; owner: string; relay: string }>("/api/board/onboarding/join", { invite, as, project }),
+  newOnboarding: (relay: string, as?: string, project?: string) =>
+    post<{ ok: boolean; owner: string; relay: string; admin?: boolean }>("/api/board/onboarding/new", { relay, as, project }),
+  detectHarnesses: () =>
+    request<{ harnesses: Record<string, boolean>; project: string }>("/api/board/detect"),
 };
+
+export interface CoordinationTask {
+  id: string;
+  op: "ask" | "delegate" | "review" | "propose" | "resolve" | "handoff";
+  status: "requested" | "claimed" | "in_progress" | "resolved" | "rejected" | "timed_out";
+  from: string;
+  to: string;
+  title: string;
+  description: string;
+  branch?: string | null;
+  contract?: string | null;
+  files: string[];
+  evidence?: any;
+  resolution?: string | null;
+  rejectionReason?: string | null;
+  claimedBy?: string | null;
+  deadlineMs: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface QuotaInfo {
+  day: string;
+  dailyRequests: number;
+  dailyRequestsLimit: number;
+  requestsPercentage: number;
+  r2StorageBytes: number;
+  r2StorageLimitBytes: number;
+  warning: boolean;
+  status: "healthy" | "warning" | "unknown";
+}
 
 export interface SearchHit {
   id: string;
