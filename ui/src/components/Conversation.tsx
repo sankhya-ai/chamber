@@ -1,4 +1,4 @@
-import { Bot, FileText, GitBranch, Hash, X } from "lucide-react";
+import { Bot, Check, Copy, FileText, GitBranch, Hash, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
@@ -70,6 +70,18 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
       onStarted((await api.startTalk(target, text, fallbackTitle, files)).thread);
     }
     onChanged();
+  };
+
+  const handleReaction = async (messageId: string, emoji: string) => {
+    try {
+      const res = await api.toggleReaction(messageId, emoji);
+      if (talk) {
+        setTalk({
+          ...talk,
+          messages: talk.messages.map((msg) => (msg.id === messageId ? { ...msg, reactions: res.reactions } : msg)),
+        });
+      }
+    } catch {}
   };
 
   return (
@@ -216,7 +228,21 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
           const patchContent = m.patch || (m.text.includes("diff --git") ? m.text : "");
 
           return (
-            <div key={m.id} className={cn("flex gap-3", grouped ? "mt-0.5" : "mt-4 first:mt-0")}>
+            <div key={m.id} className={cn("group relative flex gap-3", grouped ? "mt-0.5" : "mt-4 first:mt-0")}>
+              {/* Quick Hover Reactions Bar */}
+              <div className="absolute -top-3 right-2 hidden group-hover:flex items-center gap-0.5 rounded-full border bg-background/95 px-1 py-0.5 shadow-md backdrop-blur-xs text-xs z-10">
+                {["👍", "❤️", "👀", "🚀", "✅"].map((emoji) => (
+                  <button
+                    key={emoji}
+                    onClick={() => void handleReaction(m.id, emoji)}
+                    className="size-6 rounded-full hover:bg-accent flex items-center justify-center transition-transform hover:scale-125"
+                    title={`React ${emoji}`}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+
               <div className="w-7 shrink-0">{grouped ? null : <Avatar name={personOf(m.from, me)} size={28} />}</div>
               <div className="min-w-0 flex-1">
                 {grouped ? null : (
@@ -236,12 +262,37 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
                   <GateCard gateId={gateId} description={m.text} requestedBy={m.from} me={me} onResolved={onChanged} />
                 ) : hasPatch && patchContent ? (
                   <>
-                    <div className="whitespace-pre-wrap break-words leading-relaxed">{m.text.replace(/diff --git[\s\S]*/, "").trim() || "Sent a patch:"}</div>
+                    <MessageContent text={m.text.replace(/diff --git[\s\S]*/, "").trim() || "Sent a patch:"} />
                     <PatchCard patch={patchContent} branch={m.branch} title={talk?.title} />
                   </>
                 ) : (
-                  <div className="whitespace-pre-wrap break-words leading-relaxed">{m.text}</div>
+                  <MessageContent text={m.text} />
                 )}
+
+                {/* Reaction Chips */}
+                {m.reactions && Object.keys(m.reactions).length > 0 ? (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {Object.entries(m.reactions).map(([emoji, users]) => {
+                      const hasMine = users.includes(me);
+                      return (
+                        <button
+                          key={emoji}
+                          onClick={() => void handleReaction(m.id, emoji)}
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-colors",
+                            hasMine
+                              ? "border-primary/40 bg-primary/10 text-primary font-semibold"
+                              : "border-border/60 bg-muted/40 text-muted-foreground hover:bg-accent hover:text-foreground"
+                          )}
+                          title={users.join(", ")}
+                        >
+                          <span>{emoji}</span>
+                          <span className="text-[11px] font-mono">{users.length}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
 
                 {m.files?.length ? (
                   <div className="mt-2 flex flex-col gap-2">
@@ -291,5 +342,55 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
         onSend={send}
       />
     </section>
+  );
+}
+
+function MessageContent({ text }: { text: string }) {
+  if (!text.includes("```")) {
+    return <div className="whitespace-pre-wrap break-words leading-relaxed">{text}</div>;
+  }
+  const parts: { type: "text" | "code"; content: string; lang?: string }[] = [];
+  const regex = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g;
+  let last = 0;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > last) parts.push({ type: "text", content: text.slice(last, match.index) });
+    parts.push({ type: "code", lang: match[1] || "code", content: match[2] });
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parts.push({ type: "text", content: text.slice(last) });
+
+  return (
+    <div className="space-y-1.5">
+      {parts.map((p, i) =>
+        p.type === "text" ? (
+          <div key={i} className="whitespace-pre-wrap break-words leading-relaxed">{p.content}</div>
+        ) : (
+          <CodeSnippet key={i} lang={p.lang || "code"} code={p.content} />
+        )
+      )}
+    </div>
+  );
+}
+
+function CodeSnippet({ lang, code }: { lang: string; code: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="rounded-md border bg-muted/60 overflow-hidden font-mono text-xs my-1">
+      <div className="flex items-center justify-between px-2.5 py-1 bg-muted/90 border-b text-[10px] text-muted-foreground font-semibold">
+        <span>{lang}</span>
+        <button onClick={copy} className="inline-flex items-center gap-1 hover:text-foreground text-[10px]">
+          {copied ? <Check className="size-2.5 text-emerald-500" /> : <Copy className="size-2.5" />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <pre className="p-2.5 overflow-x-auto text-[11px] leading-relaxed scroll-thin">{code.trim()}</pre>
+    </div>
   );
 }

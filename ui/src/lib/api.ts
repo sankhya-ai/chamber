@@ -104,6 +104,12 @@ export const api = {
     post<{ ok: boolean; owner: string; relay: string; admin?: boolean }>("/api/board/onboarding/new", { relay, as, project }),
   detectHarnesses: () =>
     request<{ harnesses: Record<string, boolean>; project: string }>("/api/board/detect"),
+  toggleReaction: (messageId: string, emoji: string) =>
+    post<{ messageId: string; reactions: Record<string, string[]> }>("/api/board/reactions", { messageId, emoji }),
+  getUserStatus: () =>
+    request<{ emoji?: string; text?: string }>("/api/board/user_status"),
+  setUserStatus: (emoji: string, text: string) =>
+    post<{ emoji: string; text: string }>("/api/board/user_status", { emoji, text }),
 };
 
 export interface CoordinationTask {

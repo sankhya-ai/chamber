@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Check, Cpu, Folder, Hash, Inbox, Layers, Moon, Plus, Shield, Sun, UserPlus, Users, X } from "lucide-react";
+import { BookOpen, Bot, Check, Cpu, Folder, Hash, Inbox, Layers, Moon, Plus, Settings, Shield, Sun, UserPlus, Users, X } from "lucide-react";
 import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
@@ -23,6 +23,7 @@ interface Props {
   onGates?: () => void;
   onCoordination?: () => void;
   onAway?: () => void;
+  onSettings?: () => void;
   onTheme: () => void;
   onChanged: () => void;
 }
@@ -87,6 +88,7 @@ export function Sidebar({
   onGates,
   onCoordination,
   onAway,
+  onSettings,
   onTheme,
   onChanged,
 }: Props) {
@@ -299,6 +301,7 @@ export function Sidebar({
 
         {data?.admin ? <IconButton label="Invite a teammate" onClick={onInvite}><UserPlus className="size-4" /></IconButton> : null}
         <IconButton label="Members" onClick={onMembers}><Users className="size-4" /></IconButton>
+        {onSettings ? <IconButton label="Settings" onClick={onSettings}><Settings className="size-4" /></IconButton> : null}
         <IconButton label={dark ? "Light mode" : "Dark mode"} onClick={onTheme}>{dark ? <Sun className="size-4" /> : <Moon className="size-4" />}</IconButton>
       </div>
     </aside>
