@@ -90,7 +90,19 @@ Download Chamber for Mac from **[turalearn.com/chamber](https://turalearn.com/ch
 </tr>
 </table>
 
-Chamber is for macOS 13 or later on Apple silicon. Windows is coming soon.
+The Mac app is for macOS 13 or later on Apple silicon. To leave a chamber, use **Settings → Log out**; the app returns to the same screen.
+
+### On Windows
+
+A Windows app is coming. Until then, run Chamber from this repository. You need [Node.js 22.4+](https://nodejs.org) and Git:
+
+```bash
+git clone https://github.com/tura-learn/chamber.git
+cd chamber
+npm start
+```
+
+Chamber opens in your browser on the same **Create a chamber** / **Join a chamber** screen as the Mac app, and everything after that is the same. The first time you create a chamber it installs Cloudflare's tooling by itself. Next time, run `npm start` again from the same folder.
 
 ## Private by design
 
@@ -122,7 +134,7 @@ The full threat model is in [SECURITY.md](SECURITY.md).
 
 ## Build from source
 
-Most people should [download the app](https://turalearn.com/chamber). To build it yourself you need Node.js 22.4+, Rust and Git:
+Most people on a Mac should [download the app](https://turalearn.com/chamber). To build the Mac app yourself you need Node.js 22.4+, Rust and Git:
 
 ```bash
 git clone https://github.com/tura-learn/chamber.git

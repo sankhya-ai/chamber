@@ -80,6 +80,7 @@ export const api = {
   addWorkspace: (path: string) => post<{ output: string }>("/api/board/workspaces", { path }),
   pickFolder: () => post<{ path?: string; cancelled?: boolean }>("/api/board/workspaces/pick"),
   removeWorkspace: (path: string) => post<{ output: string }>("/api/board/workspaces/remove", { path }),
+  logout: () => post<{ ok: boolean }>("/api/board/logout", {}),
   invite: () => request<{ command: string; code?: string }>("/api/board/invite"),
   memory: () => request<{ files: { path: string; version: number; author: string; ts: number }[] }>("/api/board/memory"),
   memoryFile: (path: string, version = 0) => request<{ path: string; version: number; text: string | null }>(`/api/board/memory/file?path=${encodeURIComponent(path)}${version ? `&version=${version}` : ""}`),

@@ -175,6 +175,7 @@ export function SettingsDialog({
   const [statusText, setStatusText] = useState("");
   const [quota, setQuota] = useState<QuotaInfo | null>(null);
   const [copiedInvite, setCopiedInvite] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
   const [copiedRelay, setCopiedRelay] = useState(false);
   const [inviteCommand, setInviteCommand] = useState("");
@@ -376,6 +377,25 @@ export function SettingsDialog({
                     <Badge variant={data?.admin ? "default" : "outline"} className="text-xs">
                       {data?.admin ? "Workspace Administrator" : "Team Member"}
                     </Badge>
+                  </SettingsOptionRow>
+                </SettingsOptionGroup>
+
+                <SettingsOptionGroup title="Session">
+                  <SettingsOptionRow
+                    label="Log out"
+                    description="Leave this chamber on this Mac and go back to the create-or-join screen. Use your invite code to come back in."
+                  >
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 px-2.5 text-xs"
+                      onClick={() => {
+                        if (!confirmLogout) return setConfirmLogout(true);
+                        void api.logout().then(() => onChanged());
+                      }}
+                    >
+                      {confirmLogout ? "Confirm log out" : "Log out"}
+                    </Button>
                   </SettingsOptionRow>
                 </SettingsOptionGroup>
 

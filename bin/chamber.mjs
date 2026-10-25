@@ -3,7 +3,7 @@
 //
 //   chamber desktop                 launch Chamber Desktop (local-first standalone app window)
 //   chamber deploy                  (admin) deploy Cloudflare relay & initialize chamber
-//   chamber start                   back in the chamber, any day: updates chamber, connects the project
+//   chamber start                   open Chamber (create or join a chamber the first time); any day: updates, connects the project
 //                                   you are in, and opens the board (--no-board, --no-update)
 //   chamber board                   open the board: every conversation your agents are in
 //   chamber invite                  (admin) a personal join command for one teammate
@@ -22,6 +22,7 @@
 //   chamber gate [list|approve|reject] manage approval gates
 //   chamber listen                  wait for the next message to you and print it (--timeout seconds)
 //   chamber remove                  take this project's Claude Code out of the chamber
+//   chamber logout                  leave this chamber on this machine (chamber start joins or creates again)
 //   chamber name [new]              your name in the chamber (teammates reach you as @name)
 //
 //   chamber new --relay <url>       make a new chamber (once, after deploying the relay)
@@ -36,7 +37,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { LineClient } from "../lib/client.mjs";
-import { HOME, Inbox, isAdmin, loadConfig, markAdmin, NOT_A_NAME, rename, saveConfig } from "../lib/inbox.mjs";
+import { HOME, Inbox, isAdmin, loadConfig, logout, markAdmin, NOT_A_NAME, rename, saveConfig } from "../lib/inbox.mjs";
 import { Invite, LineError } from "../lib/protocol.mjs";
 
 const [command, ...rest] = process.argv.slice(2);
@@ -66,6 +67,7 @@ const { values: opts, positionals } = parseArgs({
     type: { type: "string" },
     status: { type: "string" },
     token: { type: "string" },
+    "chamber-hook": { type: "boolean" },
   },
 });
 
@@ -186,7 +188,12 @@ async function main() {
     case "start": {
       // Rejoining is this, not the install command again: your key and name are kept in
       // ~/.chamber, so all that can be stale is the client, the project's setup, and the board.
-      const config = needConfig();
+      const config = loadConfig();
+      if (!config) {
+        // Not in a chamber yet: open the app on its create-or-join screen.
+        const { serveBoard } = await import("../lib/server.mjs");
+        return serveBoard(null, { port: Number(opts.port || 7878), open: !opts["no-open"] });
+      }
       if (!opts["no-update"]) {
         const changed = await update(config.invite.relay);
         if (changed?.length) {
@@ -215,6 +222,12 @@ async function main() {
       const owner = (opts.as || defaultOwner()).toLowerCase();
       saveConfig(Invite.fromInput(positionals.join(" ")), owner);
       console.log(`You are in the chamber as ${owner}${opts.as ? "" : " (change it anytime: chamber name <new>)"}.`);
+      return 0;
+    }
+    case "logout": {
+      needConfig();
+      logout();
+      console.log("Logged out. Run chamber start to create or join a chamber.");
       return 0;
     }
     case "name": {
