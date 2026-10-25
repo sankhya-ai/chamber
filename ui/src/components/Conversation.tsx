@@ -22,6 +22,7 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
 }) {
   const [talk, setTalk] = useState<Talk | null>(null);
   const [to, setTo] = useState(fixedTo);
+  const [notice, setNotice] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const toContainerRef = useRef<HTMLDivElement>(null);
@@ -66,15 +67,20 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
     if (list.current) list.current.scrollTop = list.current.scrollHeight;
   }, [count]);
 
+  const explain = (r: { held?: boolean; wake?: { woke: boolean; reason?: string } }) =>
+    setNotice(r.wake?.woke ? "Starting that agent to answer…" : r.wake ? `${r.wake.reason} Your message is queued and it will see it first thing.` : "");
+
   const send = async (text: string, files: AttachedFile[] = []) => {
     if (talkId && talk) {
-      await api.say(talkId, defaultRecipient(talk, me), text, files);
+      explain(await api.say(talkId, defaultRecipient(talk, me), text, files));
       setTalk(await api.talk(talkId));
     } else {
       const target = address(to);
       if (!target) throw new Error("Who is it for? Type a name, e.g. nitin, or a #channel.");
       const fallbackTitle = text ? text.split("\n")[0].slice(0, 80) : files[0] ? `File: ${files[0].name}` : "New talk";
-      onStarted((await api.startTalk(target, text, fallbackTitle, files)).thread);
+      const started = await api.startTalk(target, text, fallbackTitle, files);
+      explain(started);
+      onStarted(started.thread);
     }
     onChanged();
   };
@@ -344,6 +350,7 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
         })}
       </div>
 
+      {notice ? <p className="border-t bg-muted/40 px-4 py-2 text-xs text-muted-foreground">{notice}</p> : null}
       <Composer
         placeholder={talkId ? `Reply${talk?.channel ? ` in ${talk.channel}` : talk ? ` to ${who(defaultRecipient(talk, me), me)}` : ""}…` : "What do you want to talk about?"}
         people={people.filter((p) => !p.includes("/") && !p.startsWith("#")).map((p) => p.replace(/^@/, ""))}

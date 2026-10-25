@@ -213,7 +213,7 @@ async function main() {
     case "join": {
       if (!positionals[0]) throw new LineError("chamber join <invite> [--as <name>]");
       const owner = (opts.as || defaultOwner()).toLowerCase();
-      saveConfig(Invite.parse(positionals[0]), owner);
+      saveConfig(Invite.fromInput(positionals.join(" ")), owner);
       console.log(`You are in the chamber as ${owner}${opts.as ? "" : " (change it anytime: chamber name <new>)"}.`);
       return 0;
     }
@@ -230,7 +230,8 @@ async function main() {
     case "invite": {
       if (!isAdmin(needConfig())) throw new LineError("only your chamber's admin invites people: ask them for the join command");
       const { inviteCommand } = await import("../lib/admin.mjs");
-      console.log(`Send this to one teammate, privately (it is their personal key to the chamber). They run it inside their project:\n\n  ${await inviteCommand(needConfig())}`);
+      const { inviteCode } = await import("../lib/admin.mjs");
+      console.log(`Send this invite code to one teammate, privately (it is their personal key to the chamber). They paste it into Chamber Desktop under "Join a chamber":\n\n  ${await inviteCode(needConfig())}\n\nOr, from a terminal:\n\n  ${await inviteCommand(needConfig())}`);
       return 0;
     }
     case "dream": {

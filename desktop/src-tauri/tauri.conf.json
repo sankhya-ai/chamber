@@ -4,8 +4,8 @@
   "version": "0.2.0",
   "identifier": "com.turalearn.chamber",
   "build": {
-    "beforeDevCommand": "npm --prefix ../../ui run build",
-    "beforeBuildCommand": "npm --prefix ../../ui run build",
+    "beforeDevCommand": "npm --prefix ../ui run build",
+    "beforeBuildCommand": "npm --prefix ../ui run build",
     "devUrl": "http://127.0.0.1:7878",
     "frontendDist": "../../board"
   },
@@ -31,6 +31,35 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all"
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/node"
+    ],
+    "resources": {
+      "../../bin": "app/bin",
+      "../../lib": "app/lib",
+      "../../board": "app/board",
+      "../../package.json": "app/package.json",
+      "../../relay/src": "app/relay/src",
+      "../../relay/wrangler.toml": "app/relay/wrangler.toml",
+      "../../relay/package.json": "app/relay/package.json",
+      "../../relay/node_modules": "app/relay/node_modules"
+    },
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "minimumSystemVersion": "13.0"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
   }
 }

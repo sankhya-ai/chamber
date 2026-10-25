@@ -197,7 +197,7 @@ export function SettingsDialog({
       api.quota().then((q) => setQuota(q), () => undefined);
       if (data?.admin) {
         api.invite().then(
-          (res: { command: string }) => setInviteCommand(res.command),
+          (res: { command: string; code?: string }) => setInviteCommand(res.code || res.command),
           () => undefined
         );
       }

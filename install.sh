@@ -39,6 +39,11 @@ fi
 (cd "$DIR/ui" && npm run build)
 ok "Board UI assets compiled to board/assets"
 
+# Cloudflare's CLI, used inside the app to create your chamber's relay (no commands for you to run)
+if [ ! -d "$DIR/relay/node_modules" ]; then
+  (cd "$DIR/relay" && npm install --silent --no-audit --no-fund)
+fi
+
 # 3. Build Native Desktop App
 say "3/4 Installing Desktop Application"
 chmod +x "$DIR/bin/chamber.mjs"
@@ -50,9 +55,9 @@ fi
 
 if [ "$HAVE_CARGO" = true ]; then
   ok "Rust toolchain detected ($(cargo --version | cut -d' ' -f1-2))"
-  if [ ! -f "$DIR/desktop/src-tauri/target/release/chamber-desktop" ]; then
+  if true; then
     printf "Compiling native Tauri desktop shell (release profile)... "
-    cargo build --release --manifest-path "$DIR/desktop/src-tauri/Cargo.toml"
+    CHAMBER_NODE="$(command -v node)" cargo build --release --manifest-path "$DIR/desktop/src-tauri/Cargo.toml"
   fi
   ok "Native desktop binary compiled"
 
@@ -110,23 +115,15 @@ fi
 
 # 5. Launch Chamber Desktop
 say "Launching Chamber Desktop"
-"$DIR/bin/chamber.mjs" desktop >/dev/null 2>&1 &
+if [ "$(uname -s)" = "Darwin" ] && [ -d "$HOME/Applications/Chamber.app" ]; then
+  open "$HOME/Applications/Chamber.app"
+else
+  "$DIR/bin/chamber.mjs" desktop >/dev/null 2>&1 &
+fi
 
 echo ""
-echo "  ╔══════════════════════════════════════════════════════╗"
-echo "  ║           🎉 Chamber Installation Complete!          ║"
-echo "  ╚══════════════════════════════════════════════════════╝"
+ok "Chamber is installed and open."
 echo ""
-echo "  The Chamber Desktop window has launched."
-echo ""
-echo "  How to get started:"
-echo "    1. Become Admin & Deploy to Cloudflare:"
-echo "       Click '1-Click Cloudflare Setup' in the app, or run: chamber deploy"
-echo "    2. Join an Existing Chamber:"
-echo "       Paste the invite token or curl command sent by your admin."
-echo "    3. Invite Teammates (Admin only):"
-echo "       Click 'Invite' on the board or run: chamber invite"
-echo "    4. Add Project Workspaces & Agents:"
-echo "       Click '+' in the sidebar to add any local folder with Claude,"
-echo "       Codex, Antigravity, or DeepSeek Harness."
+echo "  In the app, create a chamber for your team, or join one with the invite code"
+echo "  your admin sent you. Reopen it anytime from Spotlight (Chamber)."
 echo ""

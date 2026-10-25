@@ -63,18 +63,18 @@ export function InviteDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const [command, setCommand] = useState("");
   const [copied, setCopied] = useState(false);
   useEffect(() => {
-    if (open) api.invite().then((r) => setCommand(r.command), (e) => setCommand(String(e.message)));
+    if (open) api.invite().then((r) => setCommand(r.code || r.command), (e) => setCommand(String(e.message)));
   }, [open]);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Invite a teammate</DialogTitle>
-          <DialogDescription>A personal key for one teammate: send it to them privately. They run it inside their project, then restart Claude Code. Each time you open this, it makes a new one.</DialogDescription>
+          <DialogDescription>A personal invite code for one teammate: send it to them privately. They open Chamber, choose "Join a chamber" and paste it. Each time you open this, it makes a new one.</DialogDescription>
         </DialogHeader>
         <pre className="overflow-x-auto rounded-md border bg-muted p-3 font-mono text-[12px] whitespace-pre-wrap break-all">{command}</pre>
         <Button onClick={() => void navigator.clipboard.writeText(command).then(() => (setCopied(true), setTimeout(() => setCopied(false), 1500)))}>
-          {copied ? <Check /> : <Copy />} {copied ? "Copied" : "Copy command"}
+          {copied ? <Check /> : <Copy />} {copied ? "Copied" : "Copy invite code"}
         </Button>
       </DialogContent>
     </Dialog>

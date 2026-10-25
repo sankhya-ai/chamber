@@ -25,6 +25,7 @@ import memory from "../../lib/memory.mjs";
 import runner from "../../lib/runner.mjs";
 import search from "../../lib/search.mjs";
 import server from "../../lib/server.mjs";
+import wake from "../../lib/wake.mjs";
 import boardPage from "../../board/index.html";
 import boardScript from "../../board/assets/board.mjs";
 import boardStyle from "../../board/assets/board.css";
@@ -48,6 +49,7 @@ const FILES = {
   "lib/runner.mjs": runner,
   "lib/search.mjs": search,
   "lib/server.mjs": server,
+  "lib/wake.mjs": wake,
   "board/index.html": boardPage,
   "board/assets/board.mjs": boardScript,
   "board/assets/board.css": boardStyle,

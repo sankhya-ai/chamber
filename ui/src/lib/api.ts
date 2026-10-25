@@ -72,15 +72,15 @@ export const api = {
   session: () => request<{ token: string; me: string }>("/api/board/session"),
   talk: (id: string) => request<Talk>(`/api/board/talks/${encodeURIComponent(id)}?seen=1`), // opening a talk marks it read
   say: (id: string, to: string, text: string, files: AttachedFile[] = []) =>
-    post<{ id: string; thread: string }>(`/api/board/talks/${encodeURIComponent(id)}`, { to, text, files }),
+    post<{ id: string; thread: string; held?: boolean; wake?: { woke: boolean; reason?: string } }>(`/api/board/talks/${encodeURIComponent(id)}`, { to, text, files }),
   startTalk: (to: string, text: string, title: string, files: AttachedFile[] = []) =>
-    post<{ id: string; thread: string }>("/api/board/talks", { to, text, title, files }),
+    post<{ id: string; thread: string; held?: boolean; wake?: { woke: boolean; reason?: string } }>("/api/board/talks", { to, text, title, files }),
   markDone: (id: string, done = true) => post<{ ok: boolean; done: boolean }>(`/api/board/talks/${encodeURIComponent(id)}/done`, { done }),
   channel: (op: "join" | "leave" | "add", name: string, owner?: string) => post<{ ok: boolean; channel: string }>("/api/board/channels", { op, name, owner }),
   addWorkspace: (path: string) => post<{ output: string }>("/api/board/workspaces", { path }),
   pickFolder: () => post<{ path?: string; cancelled?: boolean }>("/api/board/workspaces/pick"),
   removeWorkspace: (path: string) => post<{ output: string }>("/api/board/workspaces/remove", { path }),
-  invite: () => request<{ command: string }>("/api/board/invite"),
+  invite: () => request<{ command: string; code?: string }>("/api/board/invite"),
   memory: () => request<{ files: { path: string; version: number; author: string; ts: number }[] }>("/api/board/memory"),
   memoryFile: (path: string, version = 0) => request<{ path: string; version: number; text: string | null }>(`/api/board/memory/file?path=${encodeURIComponent(path)}${version ? `&version=${version}` : ""}`),
   saveMemoryFile: (path: string, text: string, message?: string, base?: number) =>

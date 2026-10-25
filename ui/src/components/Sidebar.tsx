@@ -316,11 +316,12 @@ export function Sidebar({
 
       {note ? <p className="mx-2 mb-2 cursor-pointer text-[12px] text-muted-foreground" onClick={() => setNote("")}>{note}</p> : null}
 
-      <div className="flex items-center gap-1 border-t px-1 pt-2">
+      <div className="flex flex-col gap-1 border-t px-1 pt-2">
+        <div className="flex items-center gap-2">
         {naming === null ? (
-          <button onClick={() => setNaming(me)} title="Your name: teammates reach you as @name. Click to change." className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-accent">
-            <Avatar name={me || "?"} size={20} online={data?.connected ?? true} />
-            <span className="truncate text-xs">@{me}</span>
+          <button onClick={() => setNaming(me)} title="Your name: teammates reach you as @name. Click to change." className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1.5 text-left hover:bg-accent">
+            <Avatar name={me || "?"} size={24} online={data?.connected ?? true} />
+            <span className="truncate text-sm">@{me}</span>
           </button>
         ) : (
           <form className="flex flex-1 items-center gap-1" onSubmit={(e) => (e.preventDefault(), void act(() => api.setName(naming), `You are @${naming.toLowerCase()} now.`).then(() => setNaming(null)))}>
@@ -342,11 +343,14 @@ export function Sidebar({
           <span className={cn("size-2 rounded-full", awayActive ? "bg-[#8db8d5]" : "bg-[#a8cbbb]")} />
           <span>{awayActive ? "Away" : "Active"}</span>
         </button>
+        </div>
 
+        <div className="flex items-center justify-between px-1">
         {data?.admin ? <IconButton label="Invite a teammate" onClick={onInvite}><UserPlus className="size-4" /></IconButton> : null}
         <IconButton label="Members" onClick={onMembers}><Users className="size-4" /></IconButton>
         {onSettings ? <IconButton label="Settings" onClick={onSettings}><Settings className="size-4" /></IconButton> : null}
         <IconButton label={dark ? "Light mode" : "Dark mode"} onClick={onTheme}>{dark ? <Sun className="size-4" /> : <Moon className="size-4" />}</IconButton>
+        </div>
       </div>
     </aside>
   );
