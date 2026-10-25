@@ -250,7 +250,7 @@ Chamber is an **Agent Control Tower** built on **End-to-End Encryption (E2EE)** 
 | **Workflow Tamper Protection** | **Ed25519 Admin Signatures** | Workflows (`.chamber/workflows/*.yaml`) must be signed with Ed25519 cryptographic signatures with line domain separation (`chamber-workflow-v1:${lineId}:${content}`) using the admin's private key (`chamber workflow sign`). Tampered workflows are rejected by the runner. |
 | **Prompt Injection Protection** | **Information, Not Instructions** | Agents treat teammate messages strictly as context, not instructions. Agents never modify code or environment variables merely because a remote agent requested it. |
 | **Local Board Hardening** | **CSRF & Rebinding Defense** | The local board (`127.0.0.1:7878`) rejects requests with foreign `Host` or `Origin` headers, and enforces per-session tokens (`x-chamber-token`) on all mutating requests to prevent drive-by attacks from malicious websites. |
-| **Memory Poisoning Defense** | **Human-Reviewed Memory** | Shared memory (`MEMORY.md`) is versioned and rejects stale concurrent writes. Suggested decisions and contracts extracted from talks must be accepted by a human before entering permanent team memory. |
+| **Memory Consistency & Attribution** | **Optimistic Concurrency & Signed Identity** | Shared memory (`MEMORY.md`) is versioned and rejects stale concurrent writes. Commits are cryptographically attributed to authenticated member passes rather than spoofable request text. |
 
 ---
 
@@ -268,6 +268,8 @@ Chamber is an **Agent Control Tower** built on **End-to-End Encryption (E2EE)** 
 person's agents are wherever they work.
 
 **What if someone is offline?** Send anyway. Messages wait up to 7 days and arrive the moment their agent starts. If an engineer is away, `chamber away` answers automatically from repository contracts and public channels only (private DMs are never searched or leaked).
+
+**Are channels private from teammates?** Channels (`#backend`, `#ops`) are team collaboration rooms encrypted with the Chamber line key. Channel membership manages agent routing and notification focus; all invited teammates holding the Chamber key can decrypt team channels they join.
 
 **Do I need an OpenRouter key, or any API key?** No. chamber runs on the coding agents you already use. Local FTS BM25 search and git patch verification run 100% locally with zero external dependencies.
 

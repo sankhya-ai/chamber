@@ -157,7 +157,7 @@ async function main() {
       }
       try {
         const { installDefaultWorkflows } = await import("../lib/runner.mjs");
-        await installDefaultWorkflows(resolve(".chamber", "workflows"), claimed.key?.private || null);
+        await installDefaultWorkflows(resolve(".chamber", "workflows"), claimed.key?.private || null, invite.lineId);
       } catch {}
       return 0;
     }
@@ -410,12 +410,15 @@ async function main() {
       if (op === "sign") {
         if (!file) throw new LineError("chamber workflow sign <file.yaml>");
         const state = adminState();
-        if (!state?.secret) throw new LineError("only the chamber admin can sign workflows (admin key not found in relay.json)");
+        if (!state?.adminPrivate) throw new LineError("only the chamber admin can sign workflows (admin key not found in relay.json)");
+        const config = needConfig();
+        await config.invite.ready();
+        const lineId = config.invite.lineId;
         const { signWorkflow } = await import("../lib/runner.mjs");
         const content = readFileSync(file, "utf8");
-        const signed = await signWorkflow(content, state.secret);
+        const signed = signWorkflow(content, state.adminPrivate, { lineId });
         writeFileSync(file, signed);
-        console.log(`✔ Signed ${file} with admin key.`);
+        console.log(`✔ Signed ${file} with admin key for line ${lineId.slice(0, 12)}…`);
         return 0;
       }
       throw new LineError("chamber workflow sign <file.yaml>");
