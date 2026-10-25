@@ -48,25 +48,34 @@ export function TeamWorkView({
 }: TeamWorkViewProps) {
   const [tasks, setTasks] = useState<CoordinationTask[]>([]);
   const [gates, setGates] = useState<Gate[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [manualSyncing, setManualSyncing] = useState(false);
   const [filter, setFilter] = useState<"all" | "needs_you" | "in_progress" | "completed">("all");
 
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = async (isManual = false) => {
+    if (isManual) setManualSyncing(true);
     try {
       const [taskRes, gateRes] = await Promise.all([
         api.coordinationTasks().catch(() => ({ tasks: [] })),
         api.gates().catch(() => ({ gates: [] })),
       ]);
-      setTasks(taskRes.tasks || []);
-      setGates(gateRes.gates || []);
-    } catch {}
-    setLoading(false);
+      const nextTasks = taskRes.tasks || [];
+      const nextGates = gateRes.gates || [];
+
+      // Buzz pattern: Deep equality comparison prevents re-render flicker on identical polls
+      setTasks((prev) => (JSON.stringify(prev) === JSON.stringify(nextTasks) ? prev : nextTasks));
+      setGates((prev) => (JSON.stringify(prev) === JSON.stringify(nextGates) ? prev : nextGates));
+    } catch {} finally {
+      setInitialLoading(false);
+      if (isManual) {
+        setTimeout(() => setManualSyncing(false), 500);
+      }
+    }
   };
 
   useEffect(() => {
     void loadData();
-    const interval = setInterval(loadData, 4000);
+    const interval = setInterval(() => void loadData(false), 4000);
     return () => clearInterval(interval);
   }, []);
 
@@ -271,11 +280,11 @@ export function TeamWorkView({
           <Button
             size="sm"
             variant="ghost"
-            onClick={loadData}
-            disabled={loading}
+            onClick={() => void loadData(true)}
+            disabled={manualSyncing}
             className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
           >
-            <RefreshCw className={cn("size-3 mr-1", loading && "animate-spin")} />
+            <RefreshCw className={cn("size-3 mr-1", manualSyncing && "animate-spin")} />
             Sync
           </Button>
         </div>
@@ -466,7 +475,7 @@ export function TeamWorkView({
         ) : null}
 
         {/* Minimalist Empty State (When no tasks/gates are active) */}
-        {!loading && pendingGates.length === 0 && inProgressTasks.length === 0 && completedTasks.length === 0 ? (
+        {!initialLoading && pendingGates.length === 0 && inProgressTasks.length === 0 && completedTasks.length === 0 ? (
           <div className="rounded-xl border border-dashed border-border/70 bg-card/40 p-10 text-center flex flex-col items-center justify-center">
             <div className="size-9 rounded-full bg-muted flex items-center justify-center text-muted-foreground mb-2.5">
               <CheckCircle2 className="size-5 text-[#36634d] dark:text-[#a8cbbb]" />

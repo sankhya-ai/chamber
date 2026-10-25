@@ -46,7 +46,11 @@ function Files({ onTalk }: { onTalk: (id: string) => void }) {
   const [closed, setClosed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    const load = () => api.memory().then((r) => setFiles(r.files), () => undefined);
+    const load = () =>
+      api.memory().then(
+        (r) => setFiles((prev) => (JSON.stringify(prev) === JSON.stringify(r.files) ? prev : r.files)),
+        () => undefined
+      );
     void load();
     const timer = setInterval(load, 5000);
     return () => clearInterval(timer);

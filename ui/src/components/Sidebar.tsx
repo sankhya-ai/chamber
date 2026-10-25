@@ -275,8 +275,8 @@ export function Sidebar({
               >
                 <div className="flex items-center gap-2 w-full">
                   <Folder className={cn("size-3.5 shrink-0", online ? "text-online" : "text-muted-foreground/60")} />
-                  <span className="truncate text-[13px] font-medium text-foreground min-w-0 flex-1" title={p.path || undefined}>
-                    {p.path ? p.name : KIND[p.agents[0].kind] ?? p.name}
+                  <span className="truncate text-[13px] font-medium text-foreground min-w-0 flex-1" title={p.path || p.name}>
+                    {p.path ? (p.name || p.path.split("/").pop() || "project") : (KIND[p.agents[0]?.kind] ?? p.name ?? "agent")}
                   </span>
                   {p.path ? (
                     <button
@@ -289,7 +289,7 @@ export function Sidebar({
                     </button>
                   ) : null}
                 </div>
-                <div className="flex items-center gap-1 pl-5.5 mt-1 flex-wrap">
+                <div className="flex items-center gap-1 pl-[22px] mt-1 flex-wrap">
                   {p.agents.map((a) => {
                     const kindLabel = KIND[a.kind] ?? a.kind;
                     return (

@@ -45,9 +45,16 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
     setTalk(null);
     if (!talkId) return;
     let live = true;
-    const load = () => api.talk(talkId).then((t) => (live && setTalk(t), onChanged()), () => undefined);
+    const load = () =>
+      api.talk(talkId).then(
+        (t) => {
+          if (!live) return;
+          setTalk((prev) => (JSON.stringify(prev) === JSON.stringify(t) ? prev : t));
+        },
+        () => undefined
+      );
     void load();
-    const timer = setInterval(load, 2000);
+    const timer = setInterval(load, 2500);
     return () => {
       live = false;
       clearInterval(timer);

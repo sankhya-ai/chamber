@@ -80,24 +80,31 @@ export function App() {
 
   const refresh = useCallback(() => {
     api.board().then(
-      (d) => (setData(d), setError("")),
+      (d) => {
+        setData((prev) => (JSON.stringify(prev) === JSON.stringify(d) ? prev : d));
+        setError("");
+      },
       (e) => setError(e instanceof TypeError ? "The board is not running: start it with `chamber board`." : String(e.message)),
     );
     api.gates().then(
-      (res) => setPendingGatesCount((res.gates || []).filter((g) => g.status === "pending").length),
+      (res) => {
+        const count = (res.gates || []).filter((g) => g.status === "pending").length;
+        setPendingGatesCount((prev) => (prev === count ? prev : count));
+      },
       () => undefined
     );
     api.coordinationTasks().then(
       (res) => {
         const count = (res.tasks || []).filter((t) => t.status === "requested" || t.status === "claimed" || t.status === "in_progress").length;
-        setActiveCoordinationCount(count);
+        setActiveCoordinationCount((prev) => (prev === count ? prev : count));
       },
       () => undefined
     );
     api.awayStatus().then(
       (res) => {
-        setAwayRunning(Boolean(res.running));
-        if (res.status) setAwayStatusText(res.status);
+        const running = Boolean(res.running);
+        setAwayRunning((prev) => (prev === running ? prev : running));
+        if (res.status) setAwayStatusText((prev) => (prev === res.status ? prev : res.status));
       },
       () => undefined
     );
@@ -148,14 +155,21 @@ export function App() {
 
   useEffect(() => {
     refresh();
-    const timer = setInterval(refresh, 2500);
+    const timer = setInterval(refresh, 3500);
     const onHash = () => setRoute(parse(location.hash));
+    const onVisibility = () => {
+      if (!document.hidden) refresh();
+    };
     addEventListener("hashchange", onHash);
     addEventListener("popstate", onHash);
+    addEventListener("focus", onVisibility);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       clearInterval(timer);
       removeEventListener("hashchange", onHash);
       removeEventListener("popstate", onHash);
+      removeEventListener("focus", onVisibility);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [refresh]);
 

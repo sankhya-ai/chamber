@@ -65,5 +65,5 @@ test("routes round-trip through the URL", async () => {
     assert.equal(format(parse(hash)), hash);
   }
   assert.deepEqual(parse("#/c/backend").view, { kind: "channel", name: "#backend" });
-  assert.deepEqual(parse("").view, { kind: "inbox" });
+  assert.deepEqual(parse("").view, { kind: "work" });
 });
