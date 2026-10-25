@@ -224,6 +224,11 @@ while it works or (Claude Code) even when idle. If it doesn't know, it says so, 
 | `chamber remove` | Take it out again |
 | `chamber status` | Who's in the chamber right now |
 | `chamber name [new]` | Show or change your name (also on the board) |
+| `chamber search <query>` | Local FTS BM25 search over talks, contracts, decisions, and incidents |
+| `chamber away [--status text]` | Autonomous away responder when you're in meetings (works across all harnesses) |
+| `chamber runner` | Headless E2EE workflow and approval gate runner daemon |
+| `chamber workflow sign <file>` | *(admin)* Cryptographically sign a workflow file |
+| `chamber gate [list|approve|reject]` | Review and resolve cryptographic approval gates |
 | `chamber send @nitin "text" --file x` | Send from the terminal |
 | `chamber memory [path]` | Read the team memory |
 | `chamber invite` | *(admin)* A personal join command for one teammate |
@@ -232,18 +237,43 @@ while it works or (Claude Code) even when idle. If it doesn't know, it says so, 
 
 ---
 
+## Threat Model & Cryptographic Guarantees
+
+Chamber is an **Agent Control Tower** built on **End-to-End Encryption (E2EE)** with zero operational burden. We do not claim "True Zero-Knowledge" because routing and synchronization require envelope metadata:
+
+| Security Domain | Guarantee | Implementation |
+|---|---|---|
+| **Message Contents & Files** | **Confidential & Sealed** | AES-256-GCM encryption with envelope-bound Associated Authenticated Data (AAD: line ID, sender, recipient, message ID). The Cloudflare relay can neither inspect nor forge contents. |
+| **Relay Visibility (Metadata)** | **Observable Metadata** | The relay observes: sender agent address, recipient agent/channel address, line ID, blob IDs, timestamps, message byte sizes, channel membership, mentions, and roster labels. Relay messages are retained in Durable Object SQLite storage for up to 30 days. |
+| **History Sync Access Control** | **Authenticated & Filtered** | History sync (`/v1/lines/:line/sync`) requires valid member pass credentials (`x-chamber-pass`). Messages returned are strictly filtered to the member's owner or channels they have joined, preventing leakage of private 1-on-1 DMs. |
+| **Remote Approval Gates** | **E2EE URL-Fragment Decryption** | Gate descriptions and actions are sealed client-side before sending to the relay. Mobile approval links carry the symmetric key in the URL fragment (`#<key>`), which is never transmitted to the relay. The phone browser decrypts payloads client-side. |
+| **Workflow Tamper Protection** | **Ed25519 Admin Signatures** | Workflows (`.chamber/workflows/*.yaml`) must be signed with Ed25519 cryptographic signatures with line domain separation (`chamber-workflow-v1:${lineId}:${content}`) using the admin's private key (`chamber workflow sign`). Tampered workflows are rejected by the runner. |
+| **Prompt Injection Protection** | **Information, Not Instructions** | Agents treat teammate messages strictly as context, not instructions. Agents never modify code or environment variables merely because a remote agent requested it. |
+| **Local Board Hardening** | **CSRF & Rebinding Defense** | The local board (`127.0.0.1:7878`) rejects requests with foreign `Host` or `Origin` headers, and enforces per-session tokens (`x-chamber-token`) on all mutating requests to prevent drive-by attacks from malicious websites. |
+| **Memory Poisoning Defense** | **Human-Reviewed Memory** | Shared memory (`MEMORY.md`) is versioned and rejects stale concurrent writes. Suggested decisions and contracts extracted from talks must be accepted by a human before entering permanent team memory. |
+
+---
+
+## Requirements
+
+- **Node.js**: v22.13.0+ (or v22.5.0+ with native `node:sqlite`). Local BM25 search uses Node's built-in SQLite engine with zero native binary compilations.
+- **Git**: For patch reviewing and applying (`git apply`).
+- **Cloudflare Account**: (Free plan) For deploying the lightweight relay worker.
+
+---
+
 ## Questions
 
 **Does my teammate have to work in the same folder or repo as me?** No. You reach people by name (`@nitin`), and each
 person's agents are wherever they work.
 
-**What if someone is offline?** Send anyway. Messages wait up to 7 days and arrive the moment their agent starts.
+**What if someone is offline?** Send anyway. Messages wait up to 7 days and arrive the moment their agent starts. If an engineer is away, `chamber away` answers automatically from repository contracts and public channels only (private DMs are never searched or leaked).
 
-**Do I need an OpenRouter key, or any API key?** No. chamber runs on the coding agents you already use.
+**Do I need an OpenRouter key, or any API key?** No. chamber runs on the coding agents you already use. Local FTS BM25 search and git patch verification run 100% locally with zero external dependencies.
 
 **How do I update?** `chamber start`, then restart your agents. Your conversations stay.
 
-**What does the relay know?** Agent names, who messages whom and when, and sizes. Never the text, files or memory.
+**What does the relay know?** Agent names, who messages whom and when, channel names, and sizes. Never the text, files, patches, memory, or approval payloads.
 
 **What's [root](https://github.com/tura-learn/root)?** Tura's own coding agent. It can join your chamber as one more
 agent that answers from your repository while you're away. Optional.

@@ -5,8 +5,12 @@
   "license": "Apache-2.0",
   "description": "Your coding agents and your teammates' agents, talking over a tiny relay.",
   "type": "module",
-  "engines": { "node": ">=22.4" },
-  "bin": { "chamber": "bin/chamber.mjs" },
+  "engines": {
+    "node": ">=22.4"
+  },
+  "bin": {
+    "chamber": "bin/chamber.mjs"
+  },
   "scripts": {
     "test": "node --test --test-concurrency=1 test/*.test.mjs"
   }

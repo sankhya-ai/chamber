@@ -1,7 +1,7 @@
 // The board's data: conversations as cards, people, channels, and what each view shows.
 // Pure helpers, tested in board.test.ts.
 
-export type Status = "waiting" | "talking";
+export type Status = "waiting" | "talking" | "done";
 
 export interface Card {
   id: string;
@@ -11,6 +11,7 @@ export interface Card {
   people: string[];
   with: string[];
   channel: string | null;
+  branch?: string | null;
   count: number;
   last: { from: string; text: string; ts: number };
   updated: number;
@@ -21,6 +22,9 @@ export interface TalkMessage {
   from: string;
   to: string;
   text: string;
+  type?: string;
+  patch?: string | null;
+  branch?: string | null;
   ts: number;
   files: { name: string; size?: number; path?: string; error?: string }[];
   mentions?: string[];
@@ -84,7 +88,8 @@ export type View =
 
 export const STATUSES: { status: Status; label: string }[] = [
   { status: "waiting", label: "Waiting on you" },
-  { status: "talking", label: "Talking" },
+  { status: "talking", label: "Agents working" },
+  { status: "done", label: "Done" },
 ];
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -94,19 +99,29 @@ export const KIND: Record<string, string> = { "claude-code": "Claude", codex: "C
 export const ownerOf = (agent: string) => (agent.startsWith("@") ? agent.slice(1) : agent.split("/")[0]);
 export const isMine = (agent: string, me: string) => agent.startsWith(`${me}/`) || agent === `@${me}`;
 
+/** Detect agent harness brand/kind for visual badging. */
+export function harnessOf(agent: string): string | null {
+  if (!agent || agent.startsWith("#") || agent.startsWith("@")) return null;
+  const parts = agent.split("/")[1]?.split(".");
+  if (!parts) return null;
+  const kind = parts[0];
+  if (kind === "root" || kind === "board" || kind === "terminal") return null;
+  return KIND[kind] ?? kind;
+}
+
 /** "you", "your root", "your Claude · api", "Nitin", "Nitin's Claude · web", "#general". */
-export function who(agent: string, me: string): string {
+export function who(agent: string, me: string, { thirdPerson = false }: { thirdPerson?: boolean } = {}): string {
   if (!agent) return "";
   if (agent === "*") return "everyone";
   if (agent.startsWith("#")) return agent;
-  if (agent.startsWith("@")) return agent.slice(1) === me ? "you" : cap(agent.slice(1));
+  if (agent.startsWith("@")) return agent.slice(1) === me ? (thirdPerson ? cap(me) : "you") : cap(agent.slice(1));
   const [owner, name = ""] = agent.split("/");
   const mine = owner === me;
-  if (name === "board" || name === "terminal") return mine ? "you" : cap(owner);
+  if (name === "board" || name === "terminal") return mine ? (thirdPerson ? cap(owner) : "you") : cap(owner);
   const [kind, ...rest] = name.split(".");
   const where = rest.join(".");
   const thing = name === "root" ? "root" : name === "dsh" ? "DeepSeek" : KIND[kind] ? `${KIND[kind]}${where ? ` · ${where}` : ""}` : name;
-  return mine ? `your ${thing}` : `${cap(owner)}'s ${thing}`;
+  return mine && !thirdPerson ? `your ${thing}` : `${cap(owner)}'s ${thing}`;
 }
 
 /** The person behind an address, for avatars: "Nitin", or "You". */

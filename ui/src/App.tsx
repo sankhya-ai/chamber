@@ -1,11 +1,14 @@
-import { LayoutGrid, List, Plus, Users } from "lucide-react";
+import { LayoutGrid, List, Plus, Shield, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { AwayDialog } from "@/components/AwayDialog";
 import { CommandMenu } from "@/components/CommandMenu";
 import { Composer } from "@/components/Composer";
 import { Conversation } from "@/components/Conversation";
 import { ChannelDialog, ChannelMembersDialog, InviteDialog, MembersDialog } from "@/components/Dialogs";
+import { GatesDialog } from "@/components/GatesDialog";
 import { MemoryView } from "@/components/MemoryView";
+import { SearchBar } from "@/components/SearchBar";
 import { Sidebar } from "@/components/Sidebar";
 import { TalkList } from "@/components/TalkList";
 import { Button } from "@/components/ui/button";
@@ -55,6 +58,11 @@ export function App() {
   const [invite, setInvite] = useState(false);
   const [members, setMembers] = useState(false);
   const [channelPeople, setChannelPeople] = useState(false);
+  const [gatesOpen, setGatesOpen] = useState(false);
+  const [awayOpen, setAwayOpen] = useState(false);
+  const [pendingGatesCount, setPendingGatesCount] = useState(0);
+  const [awayRunning, setAwayRunning] = useState(false);
+  const [awayStatusText, setAwayStatusText] = useState("");
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -65,6 +73,17 @@ export function App() {
     api.board().then(
       (d) => (setData(d), setError("")),
       (e) => setError(e instanceof TypeError ? "The board is not running: start it with `chamber board`." : String(e.message)),
+    );
+    api.gates().then(
+      (res) => setPendingGatesCount((res.gates || []).filter((g) => g.status === "pending").length),
+      () => undefined
+    );
+    api.awayStatus().then(
+      (res) => {
+        setAwayRunning(Boolean(res.running));
+        if (res.status) setAwayStatusText(res.status);
+      },
+      () => undefined
     );
   }, []);
 
@@ -132,11 +151,16 @@ export function App() {
           data={data}
           view={route.view}
           dark={dark}
+          pendingGatesCount={pendingGatesCount}
+          awayActive={awayRunning}
+          awayStatusText={awayStatusText}
           onView={openView}
           onSearch={() => setMenu(true)}
           onNewChannel={() => setChannels(true)}
           onInvite={() => setInvite(true)}
           onMembers={() => setMembers(true)}
+          onGates={() => setGatesOpen(true)}
+          onAway={() => setAwayOpen(true)}
           onTheme={() => setDark((v) => !v)}
           onChanged={refresh}
         />
@@ -152,7 +176,68 @@ export function App() {
                 </button>
               ) : null}
               {error ? <span className="truncate text-[12px] text-destructive">{error}</span> : null}
-              <div className={cn("ml-auto flex items-center gap-1", route.view.kind === "memory" && "hidden")}>
+
+              <div className="ml-auto flex items-center gap-2">
+                <SearchBar onOpenTalk={(id) => go({ view: { kind: "all" }, talk: id })} />
+
+                {pendingGatesCount > 0 ? (
+                  <button
+                    onClick={() => setGatesOpen(true)}
+                    className="flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-600 dark:text-amber-400 hover:bg-amber-500/20"
+                    title="Review pending approval gates"
+                  >
+                    <Shield className="size-3.5 text-amber-500" />
+                    <span>{pendingGatesCount} Gate{pendingGatesCount === 1 ? "" : "s"}</span>
+                  </button>
+                ) : null}
+
+                {/* Real Agent & User Presence Strip */}
+                {(() => {
+                  const isConnected = Boolean(data?.connected);
+                  const onlineAgents = data?.workspaces.filter((w) => w.online).length ?? 0;
+                  const runningCards = data?.cards.filter((c) => c.status === "talking").length ?? 0;
+
+                  let dotClass = "bg-emerald-500";
+                  let label = "Online";
+                  let title = `Connected to Chamber relay as @${data?.me || "user"}. Click to set Away Mode.`;
+
+                  if (!isConnected) {
+                    dotClass = "bg-amber-500 animate-pulse";
+                    label = "Connecting…";
+                    title = "Connecting to Chamber relay… Click to check status.";
+                  } else if (awayRunning) {
+                    dotClass = "bg-amber-500 animate-pulse";
+                    label = "Away";
+                    title = `Away mode active: ${awayStatusText || "Agents auto-handling tasks"}. Click to configure.`;
+                  } else if (onlineAgents > 0) {
+                    dotClass = "bg-emerald-500";
+                    label = `${onlineAgents} ${onlineAgents === 1 ? "agent" : "agents"} · ${
+                      runningCards > 0 ? `${runningCards} running` : "idle"
+                    }`;
+                    title = `${onlineAgents} coding agent(s) active on this machine. Click to set Away Mode.`;
+                  } else {
+                    dotClass = "bg-emerald-500";
+                    label = "Online";
+                    title = `Connected to Chamber relay as @${data?.me || "user"}. No background agents running. Click to set Away Mode.`;
+                  }
+
+                  return (
+                    <button
+                      onClick={() => setAwayOpen(true)}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                        awayRunning || !isConnected
+                          ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                          : "border-border/60 bg-muted/40 text-foreground hover:bg-accent"
+                      )}
+                      title={title}
+                    >
+                      <span className={cn("size-2 rounded-full", dotClass)} />
+                      <span>{label}</span>
+                    </button>
+                  );
+                })()}
+
                 <div className={cn("flex rounded-md border p-0.5", route.view.kind !== "all" && "hidden")}>
                   {(["list", "board"] as const).map((l) => (
                     <button
@@ -168,6 +253,7 @@ export function App() {
                     </button>
                   ))}
                 </div>
+
                 <Button size="sm" onClick={() => openTalk("new")}>
                   <Plus /> New talk
                 </Button>
@@ -177,7 +263,15 @@ export function App() {
             {route.view.kind === "memory" ? (
               <MemoryView onTalk={(id) => go({ view: { kind: "all" }, talk: id })} />
             ) : (
-              <TalkList cards={cards} me={me} layout={route.view.kind === "inbox" ? "inbox" : route.view.kind === "all" ? layout : "list"} open={route.talk} onOpen={openTalk} empty={EMPTY[route.view.kind]} />
+              <TalkList
+                cards={cards}
+                me={me}
+                layout={route.view.kind === "inbox" ? "inbox" : route.view.kind === "all" ? layout : "list"}
+                open={route.talk}
+                onOpen={openTalk}
+                onDone={(id) => void api.markDone(id).then(refresh)}
+                empty={EMPTY[route.view.kind]}
+              />
             )}
 
             {here && !route.talk ? (
@@ -242,6 +336,8 @@ export function App() {
         />
       ) : null}
       <MembersDialog open={members} onOpenChange={setMembers} admin={data?.admin ?? false} me={me} data={data} onChanged={refresh} />
+      <GatesDialog open={gatesOpen} onOpenChange={setGatesOpen} me={me} onChanged={refresh} />
+      <AwayDialog open={awayOpen} onOpenChange={setAwayOpen} me={me} onChanged={refresh} />
     </TooltipProvider>
   );
 }
