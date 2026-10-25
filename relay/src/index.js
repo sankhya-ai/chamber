@@ -248,6 +248,48 @@ export class Line {
     )`);
     const gateColumns = this.sql.exec("PRAGMA table_info(gates)").toArray().map((c) => c.name);
     if (!gateColumns.includes("sealed")) this.sql.exec("ALTER TABLE gates ADD COLUMN sealed TEXT NOT NULL DEFAULT ''");
+    // Cloudflare Free-Tier Quota & Usage Safety Tracking
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS usage_stats (
+      day TEXT PRIMARY KEY,
+      daily_requests INTEGER NOT NULL DEFAULT 0,
+      messages_count INTEGER NOT NULL DEFAULT 0,
+      blobs_bytes INTEGER NOT NULL DEFAULT 0,
+      last_ts INTEGER NOT NULL
+    )`);
+  }
+
+  recordUsage(requests = 1, messages = 0, blobBytes = 0) {
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      const now = Date.now();
+      this.sql.exec(`INSERT INTO usage_stats (day, daily_requests, messages_count, blobs_bytes, last_ts)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (day) DO UPDATE SET
+          daily_requests = daily_requests + excluded.daily_requests,
+          messages_count = messages_count + excluded.messages_count,
+          blobs_bytes = blobs_bytes + excluded.blobs_bytes,
+          last_ts = excluded.last_ts`, day, requests, messages, blobBytes, now);
+    } catch {}
+  }
+
+  quota() {
+    const day = new Date().toISOString().slice(0, 10);
+    const row = this.sql.exec("SELECT daily_requests, messages_count, blobs_bytes FROM usage_stats WHERE day = ?", day).toArray()[0] || { daily_requests: 0, messages_count: 0, blobs_bytes: 0 };
+    const dailyRequests = Number(row.daily_requests || 0);
+    const dailyLimit = 100_000;
+    const r2Bytes = Number(row.blobs_bytes || 0);
+    const r2LimitBytes = 10 * 1024 * 1024 * 1024; // 10 GB
+    const warning = dailyRequests > 80_000 || r2Bytes > 8 * 1024 * 1024 * 1024;
+    return {
+      day,
+      dailyRequests,
+      dailyRequestsLimit: dailyLimit,
+      requestsPercentage: Math.round((dailyRequests / dailyLimit) * 1000) / 10,
+      r2StorageBytes: r2Bytes,
+      r2StorageLimitBytes: r2LimitBytes,
+      warning,
+      status: warning ? "warning" : "healthy",
+    };
   }
 
   // ----- channels ---------------------------------------------------------------
@@ -318,6 +360,8 @@ export class Line {
       this.line = line;
       await this.ctx.storage.put("line", line); // the alarm may wake in a fresh instance
     }
+    this.recordUsage(1);
+    if (what === "quota" || what === "stats") return json(this.quota());
     if (what === "roster") return json({ agents: this.roster() });
     if (what === "members") {
       const online = new Set(this.roster().map((w) => w.owner));

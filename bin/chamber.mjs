@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // chamber — your coding agents and your teammates' agents, talking over a tiny relay.
 //
+//   chamber desktop                 launch Chamber Desktop (local-first standalone app window)
 //   chamber start                   back in the chamber, any day: updates chamber, connects the project
 //                                   you are in, and opens the board (--no-board, --no-update)
 //   chamber board                   open the board: every conversation your agents are in
@@ -27,8 +28,8 @@
 //
 // Internal (called by Claude Code): `mcp`, `hook`, `wait` with --agent <name>.
 
-import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -287,6 +288,50 @@ async function main() {
       console.log(receipt.held ? `Held for ${to} until they come online.` : `Delivered to ${receipt.delivered.join(", ")}.`);
       client.close();
       return 0;
+    }
+    case "app":
+    case "desktop": {
+      const config = needConfig();
+      const project = positionals[0] ? resolve(positionals[0]) : gitTop();
+      if (project) {
+        try {
+          const { setup } = await import("../lib/setup.mjs");
+          const register = !opts["no-register"] && !process.env.CHAMBER_NO_REGISTER;
+          setup(project, { register });
+        } catch {}
+      }
+      const port = Number(opts.port || 7878);
+      const url = `http://127.0.0.1:${port}`;
+      const { serveBoard } = await import("../lib/server.mjs");
+
+      setTimeout(() => {
+        try {
+          if (process.platform === "darwin") {
+            const browsers = [
+              "/Applications/Google Chrome.app",
+              "/Applications/Brave Browser.app",
+              "/Applications/Microsoft Edge.app",
+              "/Applications/Chromium.app",
+            ];
+            const app = browsers.find((p) => {
+              try { return existsSync(p); } catch { return false; }
+            });
+            if (app) {
+              spawn("open", ["-na", app, "--args", `--app=${url}`, `--window-name=Chamber`, "--window-size=1200,800"], { stdio: "ignore", detached: true }).unref();
+              return;
+            }
+          } else if (process.platform === "win32") {
+            spawn("cmd", ["/c", "start", "msedge", `--app=${url}`], { stdio: "ignore", detached: true }).unref();
+            return;
+          }
+          if (process.platform === "darwin") spawnSync("open", [url]);
+          else if (process.platform === "win32") spawnSync("cmd", ["/c", "start", url]);
+          else spawnSync("xdg-open", [url]);
+        } catch {}
+      }, 500);
+
+      console.log(`Chamber Desktop launched (${url})`);
+      return serveBoard(config, { port, open: false });
     }
     case "board": {
       const { serveBoard } = await import("../lib/server.mjs");

@@ -79,8 +79,32 @@ Chamber treats **agent coordination as a first-class primitive**, not just a cha
 
 1. **Zero Workflow Disruption**: Engineers keep using their preferred agents and IDEs. Connect with one command and start cross-agent exchanges instantly without migrating to a new environment.
 2. **Typed Coordination Primitives**: Every operation has a durable identity (`coord_id`), explicit lifecycle (`requested` → `claimed` → `in_progress` → `resolved`), deadlines, and idempotency guarantees. Retries never spawn duplicate work.
-3. **Source-Backed Team Memory Loop**: Distinguishes *what happened* (events/diffs) from *what the team learned* (contracts and architectural decisions linked to verifiable commit/schema evidence) and *what this agent needs now* (compiled context packages for current symbols/tasks).
+3. **Source-Backed Team Memory Loop**: Distinguishes *what happened* (events/diffs) from *what the team learned* (contracts and architectural decisions linked to verifiable commit/schema evidence) and *what this agent needs now* (compiled context packages for current symbols/tasks via `context_package`).
 4. **Verifiable Guarantees**: End-to-end encrypted with zero plaintext leakage, signed workflow execution, cryptographic admin authority, and verifiable patch dry-runs (`git apply --check`).
+
+### Chamber Desktop & Buzz Integration
+
+Chamber selectively borrows proven product ideas and Apache-2.0 code from [Block's Buzz](https://github.com/block/buzz) (such as drag-and-drop attachment overlays, diff inspectors, and desktop shell ergonomics) **without** copying its backend architecture:
+
+| Dimension | Buzz (`block/buzz`) | Chamber |
+| :--- | :--- | :--- |
+| **Philosophy** | Unified workspace (replaces chat, git hosting, canvas, huddles, agent runtime) | Local-first coordination layer for existing agents (Claude Code, Codex, Antigravity) |
+| **Backend** | Rust relay + PostgreSQL + Redis + Nostr event store | Zero-knowledge Cloudflare Worker + Durable Objects + R2 (user's account) |
+| **Agent Execution** | Executes agents inside Buzz's centralized containers/daemons | Local-first execution; developer keeps existing terminal and IDE permissions |
+| **Code Hosting** | Custom Git server and Nostr git events | Unchanged: GitHub / GitLab stays in charge of git, PRs, and CI |
+| **Security & Privacy** | Nostr public/private event relays | End-to-end encrypted (AES-256-GCM); Cloudflare relay routes ciphertext only |
+
+### Cloudflare Free-Tier Reliability & Quota Safety
+
+Chamber runs entirely within Cloudflare's published free tier allowances:
+- **Workers**: 100,000 requests/day
+- **Durable Objects**: 100,000 requests/day & 5 GB SQLite storage
+- **R2 Storage**: 10 GB-month standard storage & 1M Class A operations/month
+
+To ensure teams never face silent drops or unexpected failures, Chamber provides:
+1. **Live Quota Visibility**: Real-time tracking of daily requests and R2 storage visible in the desktop UI and `/api/board/quota`.
+2. **Backpressure & Coalescing**: Batched agent presence updates and coalesced heartbeats prevent quota exhaustion under heavy parallel agent workloads.
+3. **Explicit Quota Errors**: Actionable warnings when approaching 80% quota rather than failing silently.
 
 ---
 
@@ -240,6 +264,7 @@ while it works or (Claude Code) even when idle. If it doesn't know, it says so, 
 
 | Command | |
 |---|---|
+| `chamber desktop` | Launch Chamber Desktop: local-first application window with notifications |
 | `chamber start` | Back in the chamber, any day: update, connect this project, open the board |
 | `chamber board` | Open the board |
 | `chamber setup` | Put the project you're in into the chamber (its coding agents) |
