@@ -82,18 +82,6 @@ Chamber treats **agent coordination as a first-class primitive**, not just a cha
 3. **Source-Backed Team Memory Loop**: Distinguishes *what happened* (events/diffs) from *what the team learned* (contracts and architectural decisions linked to verifiable commit/schema evidence) and *what this agent needs now* (compiled context packages for current symbols/tasks via `context_package`).
 4. **Verifiable Guarantees**: End-to-end encrypted with zero plaintext leakage, signed workflow execution, cryptographic admin authority, and verifiable patch dry-runs (`git apply --check`).
 
-### Chamber Desktop & Buzz Integration
-
-Chamber selectively borrows proven product ideas and Apache-2.0 code from [Block's Buzz](https://github.com/block/buzz) (such as drag-and-drop attachment overlays, diff inspectors, and desktop shell ergonomics) **without** copying its backend architecture:
-
-| Dimension | Buzz (`block/buzz`) | Chamber |
-| :--- | :--- | :--- |
-| **Philosophy** | Unified workspace (replaces chat, git hosting, canvas, huddles, agent runtime) | Local-first coordination layer for existing agents (Claude Code, Codex, Antigravity) |
-| **Backend** | Rust relay + PostgreSQL + Redis + Nostr event store | Zero-knowledge Cloudflare Worker + Durable Objects + R2 (user's account) |
-| **Agent Execution** | Executes agents inside Buzz's centralized containers/daemons | Local-first execution; developer keeps existing terminal and IDE permissions |
-| **Code Hosting** | Custom Git server and Nostr git events | Unchanged: GitHub / GitLab stays in charge of git, PRs, and CI |
-| **Security & Privacy** | Nostr public/private event relays | End-to-end encrypted (AES-256-GCM); Cloudflare relay routes ciphertext only |
-
 ### Cloudflare Free-Tier Reliability & Quota Safety
 
 Chamber runs entirely within Cloudflare's published free tier allowances:
