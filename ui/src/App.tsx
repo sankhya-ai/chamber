@@ -13,6 +13,7 @@ import { GatesDialog } from "@/components/GatesDialog";
 import { MemoryView } from "@/components/MemoryView";
 import { OnboardingView } from "@/components/OnboardingView";
 import { SearchBar } from "@/components/SearchBar";
+import { SettingsDialog } from "@/components/SettingsDialog";
 import { Sidebar } from "@/components/Sidebar";
 import { TalkList } from "@/components/TalkList";
 import { Button } from "@/components/ui/button";
@@ -66,6 +67,7 @@ export function App() {
   const [coordinationOpen, setCoordinationOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [awayOpen, setAwayOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [pendingGatesCount, setPendingGatesCount] = useState(0);
   const [activeCoordinationCount, setActiveCoordinationCount] = useState(0);
   const [awayRunning, setAwayRunning] = useState(false);
@@ -155,6 +157,9 @@ export function App() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setMenu((v) => !v);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+        e.preventDefault();
+        setSettingsOpen(true);
       } else if (!typing && !menu && e.key === "c" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         openTalk("new");
@@ -193,6 +198,7 @@ export function App() {
           onGates={() => setGatesOpen(true)}
           onAway={() => setAwayOpen(true)}
           onTheme={() => setDark((v) => !v)}
+          onSettings={() => setSettingsOpen(true)}
           onOpenAgents={() => setAgentsOpen(true)}
         />
 
@@ -213,6 +219,7 @@ export function App() {
           onGates={() => setGatesOpen(true)}
           onCoordination={() => setCoordinationOpen(true)}
           onAway={() => setAwayOpen(true)}
+          onSettings={() => setSettingsOpen(true)}
           onTheme={() => setDark((v) => !v)}
           onChanged={refresh}
         />
@@ -404,6 +411,7 @@ export function App() {
       <CoordinationDialog open={coordinationOpen} onOpenChange={setCoordinationOpen} me={me} />
       <AgentInspectorDialog open={agentsOpen} onOpenChange={setAgentsOpen} data={data} onChanged={refresh} />
       <AwayDialog open={awayOpen} onOpenChange={setAwayOpen} me={me} onChanged={refresh} />
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} data={data} me={me} onChanged={refresh} />
     </TooltipProvider>
   );
 }

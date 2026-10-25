@@ -28,6 +28,7 @@ export interface TalkMessage {
   ts: number;
   files: { name: string; size?: number; path?: string; error?: string }[];
   mentions?: string[];
+  reactions?: Record<string, string[]>;
 }
 
 export interface Talk extends Card {

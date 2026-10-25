@@ -1,4 +1,4 @@
-import { Bot, ChevronLeft, ChevronRight, Cpu, Moon, Search, Shield, Sun } from "lucide-react";
+import { Bot, ChevronLeft, ChevronRight, Cpu, Moon, Search, Settings, Shield, Sun } from "lucide-react";
 import { type BoardData } from "@/lib/board";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +14,7 @@ interface AppTopChromeProps {
   onGates: () => void;
   onAway: () => void;
   onTheme: () => void;
+  onSettings?: () => void;
   onOpenAgents?: () => void;
 }
 
@@ -29,6 +30,7 @@ export function AppTopChrome({
   onGates,
   onAway,
   onTheme,
+  onSettings,
   onOpenAgents,
 }: AppTopChromeProps) {
   const isMac = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");
@@ -171,6 +173,17 @@ export function AppTopChrome({
           <Bot className="size-3 text-amber-500" />
           <span className="hidden md:inline">{awayActive ? "Away" : "Active"}</span>
         </button>
+
+        {/* Settings button */}
+        {onSettings ? (
+          <button
+            onClick={onSettings}
+            title="Settings (⌘,)"
+            className="inline-flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          >
+            <Settings className="size-3.5" />
+          </button>
+        ) : null}
 
         {/* Theme Toggle */}
         <button
