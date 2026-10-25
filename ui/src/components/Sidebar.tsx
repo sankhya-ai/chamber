@@ -241,7 +241,7 @@ export function Sidebar({
       <div className="flex items-center gap-1 border-t px-1 pt-2">
         {naming === null ? (
           <button onClick={() => setNaming(me)} title="Your name: teammates reach you as @name. Click to change." className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-accent">
-            <Avatar name={me || "?"} size={20} />
+            <Avatar name={me || "?"} size={20} online={data?.connected ?? true} />
             <span className="truncate text-xs">@{me}</span>
           </button>
         ) : (

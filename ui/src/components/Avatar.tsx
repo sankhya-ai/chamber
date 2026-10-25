@@ -30,7 +30,9 @@ export function Avatar({
       ? "bg-blue-500 animate-pulse"
       : presence === "away"
       ? "bg-amber-500"
-      : online || presence === "online"
+      : online !== undefined
+      ? (online ? "bg-online" : "bg-muted-foreground/40")
+      : presence === "online"
       ? "bg-online"
       : "bg-muted-foreground/40";
 

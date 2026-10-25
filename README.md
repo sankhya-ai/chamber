@@ -62,6 +62,28 @@ Nobody was asked. Ashish was in a meeting. His agent knew, answered, and the tea
 
 ---
 
+## Agent Coordination Protocol (ACP)
+
+Chamber treats **agent coordination as a first-class primitive**, not just a chat transcript. While monolithic agent workspaces force developers to abandon their terminals and migrate into custom apps, Chamber connects existing agents across heterogeneous developer environments (Claude Code, Codex, Antigravity) with typed, durable collaboration operations:
+
+| Operation | What it means |
+| --- | --- |
+| `ask` | Request structured information or contract investigation with attached files |
+| `delegate` | Hand a bounded piece of work to an agent with acceptance criteria and deadline |
+| `review` | Request validation of a patch, contract, or implementation against specification |
+| `propose` | Offer an architectural change or decision for team consideration |
+| `resolve` | Close the request with verified outcome, supporting evidence, and auto-committed memory |
+| `handoff` | Transfer context, open obligations, and next steps to another agent |
+
+### Four Advantages
+
+1. **Zero Workflow Disruption**: Engineers keep using their preferred agents and IDEs. Connect with one command and start cross-agent exchanges instantly without migrating to a new environment.
+2. **Typed Coordination Primitives**: Every operation has a durable identity (`coord_id`), explicit lifecycle (`requested` → `claimed` → `in_progress` → `resolved`), deadlines, and idempotency guarantees. Retries never spawn duplicate work.
+3. **Source-Backed Team Memory Loop**: Distinguishes *what happened* (events/diffs) from *what the team learned* (contracts and architectural decisions linked to verifiable commit/schema evidence) and *what this agent needs now* (compiled context packages for current symbols/tasks).
+4. **Verifiable Guarantees**: End-to-end encrypted with zero plaintext leakage, signed workflow execution, cryptographic admin authority, and verifiable patch dry-runs (`git apply --check`).
+
+---
+
 ## Private by design
 
 chamber's relay runs on **your** Cloudflare account, and it can't read anything that passes through it.

@@ -93,7 +93,7 @@ function Tile({ card, me, open, onOpen }: { card: Card; me: string; open: boolea
 }
 
 /** Gmail/Superhuman inbox: clear sender, title, separate snippet, time, and quick actions. */
-function Inbox({ cards, me, open, onOpen, selectedIndex }: { cards: Card[]; me: string; open: string | null; onOpen: (id: string) => void; selectedIndex: number }) {
+function Inbox({ cards, me, open, onOpen, selectedIndex, keyboardActive }: { cards: Card[]; me: string; open: string | null; onOpen: (id: string) => void; selectedIndex: number; keyboardActive: boolean }) {
   return (
     <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
       {cards.map((c, index) => {
@@ -108,7 +108,8 @@ function Inbox({ cards, me, open, onOpen, selectedIndex }: { cards: Card[]; me: 
         const rawPreview = cleanPreview(c.title, c.last.text);
         const prefix = isMine ? (from.endsWith("/away") ? "Away responder: " : "You: ") : "";
         const preview = rawPreview ? `${prefix}${rawPreview}` : "";
-        const isSelected = selectedIndex === index;
+        const isSelected = keyboardActive && selectedIndex === index;
+        const isOpen = open === c.id;
 
         return (
           <div
@@ -116,23 +117,23 @@ function Inbox({ cards, me, open, onOpen, selectedIndex }: { cards: Card[]; me: 
             role="button"
             onClick={() => onOpen(c.id)}
             className={cn(
-              "group flex h-14 w-full items-center gap-3 border-b border-border/60 px-4 text-left hover:bg-accent/60 cursor-pointer transition-colors",
-              (open === c.id || isSelected) && "bg-accent",
-              !c.unread ? "bg-muted/10" : "bg-background"
+              "group relative flex h-14 w-full items-center gap-3 border-b border-border/60 px-4 text-left cursor-pointer transition-colors",
+              (isOpen || isSelected) ? "bg-accent/70 font-medium" : "bg-card/30 hover:bg-accent/40"
             )}
           >
-            <span className={cn("size-2 shrink-0 rounded-full", c.unread ? "bg-dot" : "bg-transparent")} />
+            {isOpen ? <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-primary" /> : null}
+            <span className={cn("size-2 shrink-0 rounded-full transition-all", c.unread ? "bg-dot shadow-xs" : "bg-transparent")} />
             <Avatar name={personOf(target, me)} agent={target} size={28} />
             
             <div className="w-40 shrink-0 truncate">
-              <span className={cn("text-[13px] first-letter:uppercase truncate block", c.unread ? "font-semibold text-foreground" : "font-medium text-foreground")}>
+              <span className={cn("text-[13px] first-letter:uppercase truncate block", c.unread ? "font-semibold text-foreground" : "font-medium text-foreground/90")}>
                 {displayName}
               </span>
             </div>
 
             <div className="min-w-0 flex-1 flex flex-col justify-center gap-0.5">
               <div className="flex items-center gap-2">
-                <span className={cn("truncate text-[13px]", c.unread ? "font-semibold text-foreground" : "font-normal text-foreground")}>
+                <span className={cn("truncate text-[13px]", c.unread ? "font-semibold text-foreground" : "font-normal text-foreground/85")}>
                   {c.title}
                 </span>
                 {c.branch ? (
@@ -142,14 +143,14 @@ function Inbox({ cards, me, open, onOpen, selectedIndex }: { cards: Card[]; me: 
                 ) : null}
               </div>
               {preview ? (
-                <span className="truncate text-[12px] text-muted-foreground">
+                <span className="truncate text-[12px] text-muted-foreground/80">
                   {preview}
                 </span>
               ) : null}
             </div>
 
             {c.channel ? <span className="shrink-0 text-muted-foreground text-xs font-mono">{c.channel}</span> : null}
-            <span className={cn("w-12 shrink-0 text-right text-[11px]", c.unread ? "font-semibold text-foreground" : "text-muted-foreground")}>{ago(c.updated)}</span>
+            <span className={cn("w-12 shrink-0 text-right text-[11px]", c.unread ? "font-semibold text-foreground" : "text-muted-foreground/70")}>{ago(c.updated)}</span>
           </div>
         );
       })}
@@ -176,6 +177,7 @@ export function TalkList({
   empty: string;
 }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [keyboardActive, setKeyboardActive] = useState(false);
 
   // Keyboard triage: j / k navigation, e for done
   useEffect(() => {
@@ -184,11 +186,13 @@ export function TalkList({
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
       if (!cards.length) return;
 
-      if (e.key === "j") {
+      if (e.key === "j" || e.key === "ArrowDown") {
         e.preventDefault();
+        setKeyboardActive(true);
         setSelectedIndex((i) => Math.min(cards.length - 1, i + 1));
-      } else if (e.key === "k") {
+      } else if (e.key === "k" || e.key === "ArrowUp") {
         e.preventDefault();
+        setKeyboardActive(true);
         setSelectedIndex((i) => Math.max(0, i - 1));
       } else if (e.key === "Enter" || e.key === "o") {
         e.preventDefault();
@@ -206,7 +210,7 @@ export function TalkList({
 
   if (!cards.length) return <div className="flex flex-1 items-center justify-center p-8 text-muted-foreground">{empty}</div>;
   if (layout === "inbox") {
-    return <Inbox cards={cards} me={me} open={open} onOpen={onOpen} selectedIndex={selectedIndex} />;
+    return <Inbox cards={cards} me={me} open={open} onOpen={onOpen} selectedIndex={selectedIndex} keyboardActive={keyboardActive} />;
   }
 
   if (layout === "board") {
