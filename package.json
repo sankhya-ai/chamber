@@ -12,6 +12,8 @@
     "chamber": "bin/chamber.mjs"
   },
   "scripts": {
-    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+    "test": "node --test --test-concurrency=1 test/*.test.mjs",
+    "desktop:build": "cargo build --release --manifest-path desktop/src-tauri/Cargo.toml",
+    "desktop:dev": "cargo tauri dev --manifest-path desktop/src-tauri/Cargo.toml"
   }
 }

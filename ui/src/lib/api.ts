@@ -15,16 +15,32 @@ export interface Dream {
   changes: string[];
 }
 
-function getSessionToken(): string {
+let cachedSessionToken = "";
+
+async function getSessionToken(): Promise<string> {
+  if (cachedSessionToken) return cachedSessionToken;
   try {
-    return document.querySelector<HTMLMetaElement>('meta[name="chamber-token"]')?.content || "";
-  } catch {
-    return "";
-  }
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="chamber-token"]')?.content;
+    if (meta) {
+      cachedSessionToken = meta;
+      return cachedSessionToken;
+    }
+  } catch {}
+  try {
+    const res = await fetch("/api/board/session");
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.token) {
+        cachedSessionToken = data.token;
+        return cachedSessionToken;
+      }
+    }
+  } catch {}
+  return "";
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = getSessionToken();
+  const token = await getSessionToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(token ? { "x-chamber-token": token } : {}),
@@ -102,6 +118,10 @@ export const api = {
     post<{ ok: boolean; owner: string; relay: string }>("/api/board/onboarding/join", { invite, as, project }),
   newOnboarding: (relay: string, as?: string, project?: string) =>
     post<{ ok: boolean; owner: string; relay: string; admin?: boolean }>("/api/board/onboarding/new", { relay, as, project }),
+  cloudflareAuth: () =>
+    request<{ authenticated: boolean; account: string | null }>("/api/board/onboarding/cloudflare-auth"),
+  cloudflareSetup: (as?: string, project?: string) =>
+    post<{ ok: boolean; relay: string; owner: string; inviteCommand: string }>("/api/board/onboarding/cloudflare-setup", { as, project }),
   detectHarnesses: () =>
     request<{ harnesses: Record<string, boolean>; project: string }>("/api/board/detect"),
   toggleReaction: (messageId: string, emoji: string) =>

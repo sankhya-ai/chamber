@@ -27,9 +27,9 @@ export function Avatar({
 
   const presenceColor =
     presence === "running"
-      ? "bg-blue-500 animate-pulse"
+      ? "bg-[#8db8d5] animate-pulse"
       : presence === "away"
-      ? "bg-amber-500"
+      ? "bg-[#c5b4e3]"
       : online !== undefined
       ? (online ? "bg-online" : "bg-muted-foreground/40")
       : presence === "online"
@@ -57,11 +57,11 @@ export function Avatar({
           style={{ width: Math.max(12, size * 0.48), height: Math.max(12, size * 0.48) }}
         >
           {harness === "Claude" ? (
-            <Sparkles className="size-2 text-amber-600 dark:text-amber-400" />
+            <Sparkles className="size-2 text-[#356f96] dark:text-[#8db8d5]" />
           ) : harness === "Codex" ? (
-            <Terminal className="size-2 text-emerald-600 dark:text-emerald-400" />
+            <Terminal className="size-2 text-[#36634d] dark:text-[#a8cbbb]" />
           ) : (
-            <Bot className="size-2 text-indigo-500" />
+            <Bot className="size-2 text-[#604988] dark:text-[#c5b4e3]" />
           )}
         </span>
       ) : null}

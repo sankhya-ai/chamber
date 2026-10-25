@@ -259,3 +259,120 @@ test("Security 6: Cursor persistence commits ONLY after durable processing succe
     rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test("Security 7: Local board mutation routes strictly reject missing or mismatched tokens", async () => {
+  const { createServer } = await import("node:http");
+  const { handler } = await import("../lib/server.mjs");
+  const sessionToken = "chamber-secret-auth-token-12345";
+  const live = { sessionToken };
+  let sHandler;
+  const server = createServer((req, res) => sHandler(req, res));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  sHandler = handler(live, port);
+
+  try {
+    const url = `http://127.0.0.1:${port}/api/board/onboarding/join`;
+
+    // 1. Missing token -> 403 Forbidden
+    const resNoToken = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ invite: "invalid" }),
+    });
+    assert.equal(resNoToken.status, 403);
+    const dataNoToken = await resNoToken.json();
+    assert.match(dataNoToken.detail, /Invalid or missing session token/i);
+
+    // 2. Mismatched/incorrect token -> 403 Forbidden
+    const resBadToken = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-chamber-token": "wrong-token-value",
+      },
+      body: JSON.stringify({ invite: "invalid" }),
+    });
+    assert.equal(resBadToken.status, 403);
+    const dataBadToken = await resBadToken.json();
+    assert.match(dataBadToken.detail, /Invalid or missing session token/i);
+
+    // 3. Valid token passes security check (proceeds to handler logic, which returns 400 for bad input)
+    const resValidToken = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-chamber-token": sessionToken,
+      },
+      body: JSON.stringify({ invite: "" }),
+    });
+    assert.equal(resValidToken.status, 400); // 400 from handler, NOT 403
+  } finally {
+    server.close();
+  }
+});
+
+test("Security 8: Coordination task state machine strictly prohibits unauthorized transitions", async () => {
+  const { CoordinationManager } = await import("../lib/coordination.mjs");
+  const tmp = mkdtempSync(join(tmpdir(), "chamber-sec-coord-"));
+
+  try {
+    const mgr = new CoordinationManager(tmp);
+
+    // 1. Create a requested task
+    const task = mgr.request({
+      op: "review",
+      from: "alice/agent",
+      to: "bob/agent",
+      title: "Security PR Review",
+      description: "Please audit crypto signatures",
+    });
+    assert.equal(task.status, "requested");
+
+    // 2. Claim and start work
+    mgr.claim(task.id, "bob/agent");
+    assert.equal(mgr.get(task.id).status, "claimed");
+
+    mgr.startWork(task.id);
+    assert.equal(mgr.get(task.id).status, "in_progress");
+
+    // 3. Resolve transitions to terminal state 'resolved'
+    mgr.resolve(task.id, { by: "bob/agent", resolution: "Audit passed, no issues" });
+    assert.equal(mgr.get(task.id).status, "resolved");
+
+    // 4. Terminal state is immutable: cannot reject or startWork once resolved
+    assert.throws(
+      () => mgr.reject(task.id, { by: "bob/agent", reason: "Rejected later" }),
+      /already resolved/i
+    );
+    assert.throws(
+      () => mgr.startWork(task.id),
+      /terminal task/i
+    );
+    assert.throws(
+      () => mgr.claim(task.id, "eve/agent"),
+      /already resolved/i
+    );
+
+    // 5. Rejected task cannot be resolved or started
+    const rejectTask = mgr.request({
+      op: "ask",
+      from: "eve/agent",
+      to: "bob/agent",
+      title: "Unsafe query",
+    });
+    mgr.reject(rejectTask.id, { by: "bob/agent", reason: "Forbidden" });
+    assert.equal(mgr.get(rejectTask.id).status, "rejected");
+
+    assert.throws(
+      () => mgr.resolve(rejectTask.id, { by: "bob/agent", resolution: "Should fail" }),
+      /Cannot resolve task.*status rejected/i
+    );
+    assert.throws(
+      () => mgr.startWork(rejectTask.id),
+      /terminal task/i
+    );
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});

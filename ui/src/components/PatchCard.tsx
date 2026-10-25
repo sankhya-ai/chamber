@@ -84,16 +84,17 @@ export function PatchCard({ patch, branch, title }: PatchCardProps) {
           {verification?.appliesCleanly && !applied ? (
             <Button
               size="sm"
+              variant="default"
               disabled={applying}
               onClick={handleApply}
-              className="h-6 px-2 text-[11px] gap-1 bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs"
+              className="h-6 px-2 text-[11px] gap-1 font-medium"
             >
               <Check className="size-3" />
               {applying ? "Applying..." : "Apply to Worktree"}
             </Button>
           ) : null}
           {applied ? (
-            <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1 px-1">
+            <span className="text-[11px] font-semibold text-[#36634d] dark:text-[#a8cbbb] flex items-center gap-1 px-1">
               <Check className="size-3" /> Applied
             </span>
           ) : null}
@@ -114,7 +115,7 @@ export function PatchCard({ patch, branch, title }: PatchCardProps) {
             className="h-6 px-1.5 text-muted-foreground hover:text-foreground"
             title="Copy Raw Diff"
           >
-            {copied ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
+            {copied ? <Check className="size-3 text-[#36634d] dark:text-[#a8cbbb]" /> : <Copy className="size-3" />}
           </Button>
         </div>
       </div>
@@ -123,7 +124,7 @@ export function PatchCard({ patch, branch, title }: PatchCardProps) {
         <div
           className={`border-b px-3 py-1.5 text-[11px] flex items-center justify-between ${
             verification.appliesCleanly
-              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+              ? "bg-[#a8cbbb]/15 text-[#36634d] dark:text-[#a8cbbb]"
               : "bg-destructive/10 text-destructive"
           }`}
         >
@@ -155,11 +156,11 @@ export function PatchCard({ patch, branch, title }: PatchCardProps) {
                 key={idx}
                 className={`flex px-2 py-0.5 ${
                   isAdd
-                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                    ? "bg-[#a8cbbb]/20 text-[#36634d] dark:text-[#a8cbbb]"
                     : isDel
-                    ? "bg-rose-500/15 text-rose-700 dark:text-rose-300"
+                    ? "bg-muted/70 text-muted-foreground"
                     : isHunk
-                    ? "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 font-semibold"
+                    ? "bg-[#8db8d5]/15 text-[#356f96] dark:text-[#8db8d5] font-semibold"
                     : isFile
                     ? "text-muted-foreground font-semibold"
                     : "text-foreground/80"

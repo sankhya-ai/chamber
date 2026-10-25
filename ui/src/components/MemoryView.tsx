@@ -159,7 +159,7 @@ function SuggestedMemoriesView({ onTalk, onMemoryCreated }: { onTalk: (id: strin
   }
 
   return (
-    <div className="max-w-2xl py-2">
+    <div className="w-full max-w-5xl py-2">
       <div className="mb-6 rounded-xl border bg-muted/30 p-5">
         <div className="flex items-start gap-3">
           <Sparkles className="mt-0.5 size-5 text-dot shrink-0" />
@@ -210,9 +210,10 @@ function SuggestedMemoriesView({ onTalk, onMemoryCreated }: { onTalk: (id: strin
                   </button>
                   <Button
                     size="sm"
+                    variant="default"
                     disabled={accepting === s.id}
                     onClick={() => handleAccept(s)}
-                    className="h-7 text-xs bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs"
+                    className="h-7 text-xs font-medium"
                   >
                     {accepting === s.id ? "Saving…" : "Accept into Memory"}
                   </Button>
@@ -287,7 +288,7 @@ function Dreams() {
   const start = () => api.dream().then(load, (e) => setError(String(e.message)));
   return (
     <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-8 py-6">
-      <div className="flex max-w-2xl flex-col gap-4">
+      <div className="flex w-full max-w-5xl flex-col gap-4">
         <div className="flex items-start gap-3 rounded-xl border bg-muted/40 p-4">
           <Moon className="mt-0.5 size-4 text-dot" />
           <div className="flex-1">

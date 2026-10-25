@@ -206,4 +206,110 @@ test("LineTools MCP: coordination tools integration", async () => {
   const ctx = await tools.call("context_package", { query: "Auth" });
   assert.match(ctx, /Compiled Context Package/);
   assert.match(ctx, /Verify Auth API/);
+
+  // 5. coordinate_propose
+  const propRes = await tools.call("coordinate_propose", {
+    to: "backend/codex.api",
+    title: "Switch to Ed25519 tokens",
+    proposal: "Use raw Ed25519 signatures for internal microservice RPCs",
+    contract: "auth.ed25519.v1",
+  });
+  assert.match(propRes, /Proposal #/);
+  assert.match(propRes, /Switch to Ed25519 tokens/);
+  const propTasks = tools.coordination.list({ op: "propose" });
+  assert.equal(propTasks.length, 1);
+  assert.equal(propTasks[0].status, "requested");
+  assert.equal(propTasks[0].contract, "auth.ed25519.v1");
 });
+
+test("CoordinationManager: automatic deadline expiration to timed_out", () => {
+  const dir = tmp("timeout");
+  const mgr = new CoordinationManager(dir);
+
+  // Create task with deadline in the past
+  const task = mgr.request({
+    op: "delegate",
+    from: "agentA/root",
+    to: "agentB/root",
+    title: "Urgent Hotfix",
+    deadlineMs: Date.now() - 1000, // expired 1s ago
+  });
+
+  assert.equal(task.status, "requested");
+
+  // Querying task should trigger automated expiration to timed_out
+  const fetched = mgr.get(task.id);
+  assert.equal(fetched.status, "timed_out");
+
+  // Listing tasks should reflect timed_out
+  const list = mgr.list({ status: "timed_out" });
+  assert.equal(list.length, 1);
+  assert.equal(list[0].id, task.id);
+
+  // Terminal state guards: cannot claim or resolve a timed_out task
+  assert.throws(() => mgr.claim(task.id, "agentB/root"), /timed out/);
+  assert.throws(() => mgr.resolve(task.id, { by: "agentB/root", resolution: "Done" }), /timed_out/);
+});
+
+test("CoordinationManager: importTaskFromMessage for cross-machine ingestion", () => {
+  const dir = tmp("import");
+  const mgr = new CoordinationManager(dir);
+
+  // Machine B receives message sent by Machine A containing ACP tag
+  const incomingMsg = {
+    id: "msg-999",
+    from: "nitin/claude-code.web",
+    to: "ashish/codex.api",
+    title: "[DELEGATE] Database Index Migration",
+    text: "[ACP:DELEGATE:aabbcc0011223344] Database Index Migration\n\nAdd composite index on (team_id, created_at)",
+    branch: "feat/db-indexing",
+    ts: Date.now(),
+  };
+
+  const imported = mgr.importTaskFromMessage(incomingMsg);
+  assert.ok(imported);
+  assert.equal(imported.id, "aabbcc0011223344");
+  assert.equal(imported.op, "delegate");
+  assert.equal(imported.status, "requested");
+  assert.equal(imported.from, "nitin/claude-code.web");
+  assert.equal(imported.to, "ashish/codex.api");
+  assert.equal(imported.branch, "feat/db-indexing");
+
+  // Machine B can now claim and resolve the task directly
+  const claimed = mgr.claim("aabbcc0011223344", "ashish/codex.api");
+  assert.equal(claimed.status, "claimed");
+  assert.equal(claimed.claimedBy, "ashish/codex.api");
+});
+
+test("CoordinationManager: concurrency-safe atomic persistence", () => {
+  const dir = tmp("concurrency");
+  const mgr1 = new CoordinationManager(dir);
+  const mgr2 = new CoordinationManager(dir);
+
+  // Process 1 creates task 1
+  const t1 = mgr1.request({
+    id: "task-001",
+    op: "ask",
+    from: "user1/agent",
+    to: "user2/agent",
+    title: "Task 1",
+  });
+
+  // Process 2 creates task 2
+  const t2 = mgr2.request({
+    id: "task-002",
+    op: "ask",
+    from: "user2/agent",
+    to: "user1/agent",
+    title: "Task 2",
+  });
+
+  // Both tasks must exist without clobbering each other
+  assert.ok(mgr1.get("task-001"));
+  assert.ok(mgr1.get("task-002"));
+  assert.ok(mgr2.get("task-001"));
+  assert.ok(mgr2.get("task-002"));
+  assert.equal(mgr1.list().length, 2);
+  assert.equal(mgr2.list().length, 2);
+});
+

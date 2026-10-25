@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 
 interface AwayDialogProps {
   open: boolean;
@@ -11,9 +12,16 @@ interface AwayDialogProps {
   onChanged?: () => void;
 }
 
+const PRESETS = [
+  "In a meeting",
+  "At lunch",
+  "Deep work",
+  "On vacation",
+];
+
 export function AwayDialog({ open, onOpenChange, me, onChanged }: AwayDialogProps) {
   const [running, setRunning] = useState(false);
-  const [status, setStatus] = useState("away in a meeting");
+  const [status, setStatus] = useState("in a meeting");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -47,7 +55,7 @@ export function AwayDialog({ open, onOpenChange, me, onChanged }: AwayDialogProp
       <DialogContent className="max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-2">
-            <Bot className="size-5 text-amber-500" />
+            <Bot className="size-5 text-foreground" />
             <DialogTitle>Away Mode Responder</DialogTitle>
           </div>
           <DialogDescription>
@@ -56,69 +64,112 @@ export function AwayDialog({ open, onOpenChange, me, onChanged }: AwayDialogProp
         </DialogHeader>
 
         <div className="flex flex-col gap-4 py-2">
-          <div className="flex items-center justify-between rounded-lg border bg-muted/40 p-3">
-            <div className="flex items-center gap-2.5">
-              <span className={`size-3 rounded-full ${running ? "bg-amber-500 animate-pulse" : "bg-emerald-500"}`} />
-              <div>
-                <p className="text-xs font-semibold text-foreground">
-                  Status: {running ? "Away Mode Active" : "Active & Available"}
-                </p>
-                <p className="text-[11px] text-muted-foreground">
-                  {running
-                    ? `Auto-answering with @${me}/away`
-                    : "You are marked active and receive notifications"}
-                </p>
-              </div>
+          {/* Current Status Banner */}
+          <div className="rounded-xl border bg-muted/20 p-3.5 space-y-1">
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "size-2.5 rounded-full",
+                  running ? "bg-[#8db8d5] animate-pulse" : "bg-[#a8cbbb]"
+                )}
+              />
+              <span className="text-xs font-semibold text-foreground">
+                {running ? "Away Mode is Currently Active" : "You are Currently Active & Available"}
+              </span>
             </div>
-
-            <Button
-              size="sm"
-              variant={running ? "destructive" : "default"}
-              disabled={loading}
-              onClick={() => handleToggle(!running)}
-              className="h-7 text-xs"
-            >
-              {running ? "Turn Off" : "Turn On"}
-            </Button>
+            <p className="text-[11px] text-muted-foreground pl-4.5">
+              {running
+                ? `@${me}/away is auto-answering questions from your local codebase.`
+                : "You receive all notifications and mentions normally."}
+            </p>
           </div>
 
-          <div className="flex flex-col gap-1.5">
+          {/* Status Note Input */}
+          <div className="flex flex-col gap-2">
             <label className="text-xs font-medium text-foreground">
-              Away Status Note
+              {running ? "Current Away Note" : "Away Note (shown to teammates)"}
             </label>
             <input
               value={status}
               onChange={(e) => setStatus(e.target.value)}
-              placeholder="e.g. Away at lunch, Deep work until 4pm, On vacation..."
-              className="h-8 rounded-md border bg-background px-2.5 text-xs text-foreground outline-none focus:border-ring"
+              placeholder="e.g. In a meeting, Deep work until 4pm..."
+              className="h-8.5 rounded-md border bg-background px-3 text-xs text-foreground outline-none focus:border-ring transition-colors"
             />
-            <span className="text-[10px] text-muted-foreground">
-              This note is shared with teammates when they mention or direct-message you.
-            </span>
+
+            {/* Quick Presets */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+              <span className="text-[10px] text-muted-foreground mr-1">Presets:</span>
+              {PRESETS.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setStatus(p)}
+                  className={cn(
+                    "rounded-md border px-2 py-0.5 text-[11px] transition-colors",
+                    status === p
+                      ? "bg-primary text-primary-foreground font-medium border-primary"
+                      : "bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground border-border/70"
+                  )}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
           </div>
 
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
-          <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-2.5 text-[11px] text-muted-foreground leading-relaxed">
-            <p className="font-medium text-foreground mb-0.5 flex items-center gap-1">
-              <Sparkles className="size-3 text-amber-500" /> E2EE Auto-Reply
-            </p>
-            Your away responder runs entirely on your local machine, reading contracts, schemas, and <code>MEMORY.md</code> to synthesize verified answers with zero leaks to third-party relays.
+          {/* Privacy Footnote */}
+          <div className="rounded-lg border bg-muted/20 p-2.5 text-xs text-muted-foreground flex items-center gap-2">
+            <Sparkles className="size-3.5 text-muted-foreground shrink-0" />
+            <span>Responses run locally on your machine with zero key leaks.</span>
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} className="h-7 text-xs">
+        <DialogFooter className="gap-2 sm:justify-between">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            className="h-8 text-xs"
+          >
             Cancel
           </Button>
-          <Button
-            size="sm"
-            disabled={loading}
-            onClick={() => handleToggle(true)}
-            className="h-7 text-xs bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-500"
-          >
-            {loading ? "Saving..." : "Save & Set Away"}
-          </Button>
+
+          <div className="flex items-center gap-2">
+            {running ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={loading}
+                  onClick={() => handleToggle(true)}
+                  className="h-8 text-xs"
+                >
+                  {loading ? "Updating..." : "Update Note"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="default"
+                  disabled={loading}
+                  onClick={() => handleToggle(false)}
+                  className="h-8 text-xs font-medium"
+                >
+                  {loading ? "Turning off..." : "Set as Active (I'm Back)"}
+                </Button>
+              </>
+            ) : (
+              <Button
+                size="sm"
+                variant="default"
+                disabled={loading}
+                onClick={() => handleToggle(true)}
+                className="h-8 text-xs font-medium"
+              >
+                {loading ? "Activating..." : "Set as Away"}
+              </Button>
+            )}
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

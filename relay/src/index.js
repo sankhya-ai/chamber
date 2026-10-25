@@ -6,7 +6,7 @@
 //
 //   - the roster: which agents are connected right now (one WebSocket each)
 //   - messages, so an agent that is offline gets what was sent to it when it
-//     reconnects (kept 7 days)
+//     reconnects (kept 30 days)
 //
 // The relay never sees content. Message bodies are sealed by the clients with
 // a key derived from the line's invite secret; the relay routes on the
@@ -100,7 +100,7 @@ export default {
       return json({ error: "line required for gate review" }, 400);
     }
 
-    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|roster|members|admin|sync|memory(?:\/(?:file|commit|history))?|gates(?:\/([0-9a-f]{16,64}))?|gate\/([0-9a-f]{16,64})|restart|blobs\/([^/]+))$/);
+    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|roster|members|admin|sync|coordination(?:\/[a-zA-Z0-9_-]+)?|memory(?:\/(?:file|commit|history))?|gates(?:\/([0-9a-f]{16,64}))?|gate\/([0-9a-f]{16,64})|restart|blobs\/([^/]+))$/);
     if (!match) return json({ error: "not found" }, 404);
     const [, line, what, , , blob] = match;
     const token = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
@@ -108,7 +108,7 @@ export default {
     const config = await relayConfig(env);
     const allowed = config.lines;
     if (allowed.length && !allowed.includes(line)) return json({ error: "this relay serves only its own chambers" }, 403);
-    if (blob !== undefined) return blobs(request, env, line, blob, config);
+    if (blob !== undefined) return blobs(request, env, line, blob, config, env.LINES.get(env.LINES.idFromName(line)));
     if (what === "ws" && request.headers.get("upgrade") !== "websocket") return json({ error: "expected a WebSocket" }, 426);
     const stub = env.LINES.get(env.LINES.idFromName(line));
     const forwarded = new Request(`https://line/${what}${url.search}`, request);
@@ -175,14 +175,19 @@ function landing(url, config) {
   );
 }
 
-async function blobs(request, env, line, blob, config = null) {
+async function blobs(request, env, line, blob, config = null, stub = null) {
   if (!env.BLOBS) return json({ error: "this relay has no file storage; send smaller files" }, 501);
   if (!BLOB.test(blob)) return json({ error: "bad blob id" }, 400);
   if (config?.adminKey) {
     const pass = request.headers.get("x-chamber-pass");
-    if (pass) {
-      const claims = await signedByAdmin(config.adminKey, pass);
-      if (!claims || claims.line !== line) return json({ error: "invalid pass" }, 403);
+    if (!pass) return json({ error: "a personal pass is required" }, 401);
+    const claims = await signedByAdmin(config.adminKey, pass);
+    if (!claims || claims.line !== line || !claims.member) return json({ error: "invalid pass" }, 403);
+    if (stub) {
+      const chk = await stub.fetch(new Request("https://line/member-check", {
+        headers: { "x-chamber-pass": pass, "x-line": line, "x-admin-key": config.adminKey }
+      }));
+      if (!chk.ok) return chk;
     }
   }
   const key = `${line}/${blob}`;
@@ -256,6 +261,39 @@ export class Line {
       blobs_bytes INTEGER NOT NULL DEFAULT 0,
       last_ts INTEGER NOT NULL
     )`);
+    // Shared Authoritative Coordination Tasks (Distributed ACP)
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS coordination_tasks (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT UNIQUE NOT NULL,
+      op TEXT NOT NULL,
+      status TEXT NOT NULL,
+      from_agent TEXT NOT NULL,
+      to_agent TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      branch TEXT NOT NULL DEFAULT '',
+      contract TEXT,
+      files TEXT NOT NULL DEFAULT '[]',
+      evidence TEXT,
+      resolution TEXT,
+      rejection_reason TEXT,
+      claimed_by TEXT,
+      idempotency_key TEXT,
+      deadline_ms INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS coordination_events (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      op TEXT NOT NULL,
+      status TEXT NOT NULL,
+      agent TEXT NOT NULL,
+      details TEXT NOT NULL DEFAULT '{}',
+      ts INTEGER NOT NULL
+    )`);
+    this.sql.exec("CREATE INDEX IF NOT EXISTS coord_status ON coordination_tasks (status, updated_at)");
+    this.sql.exec("CREATE INDEX IF NOT EXISTS coord_idempotency ON coordination_tasks (idempotency_key)");
   }
 
   recordUsage(requests = 1, messages = 0, blobBytes = 0) {
@@ -294,13 +332,27 @@ export class Line {
 
   // ----- channels ---------------------------------------------------------------
 
-  channels() {
+  isPrivateChannel(name) {
+    return name.startsWith("#p-") || name.startsWith("#private-");
+  }
+
+  channels(forOwner = null) {
     const byName = new Map();
     for (const row of this.sql.exec("SELECT name, owner FROM channels ORDER BY name, owner").toArray()) {
       if (!byName.has(row.name)) byName.set(row.name, []);
       byName.get(row.name).push(row.owner);
     }
-    return [...byName].map(([name, members]) => ({ name, members }));
+    const result = [];
+    for (const [name, members] of byName) {
+      if (this.isPrivateChannel(name)) {
+        if (!forOwner || members.includes(forOwner)) {
+          result.push({ name, members, private: true });
+        }
+      } else {
+        result.push({ name, members, private: false });
+      }
+    }
+    return result;
   }
 
   isMember(channel, owner) {
@@ -308,8 +360,10 @@ export class Line {
   }
 
   broadcastChannels() {
-    const frame = JSON.stringify({ t: "channels", channels: this.channels() });
-    for (const { ws } of this.members()) this.send(ws, frame);
+    for (const { ws, who } of this.members()) {
+      const chs = this.channels(who.owner);
+      this.send(ws, JSON.stringify({ t: "channels", channels: chs }));
+    }
   }
 
   /** join | leave | add (someone else): any member manages channels, like Slack. */
@@ -318,6 +372,15 @@ export class Line {
     const owner = String(frame.owner || who.owner).toLowerCase();
     if (!CHANNEL.test(name) || !OWNER.test(owner)) return this.send(ws, JSON.stringify({ t: "error", error: "a channel is #name (letters, digits, - or _)" }));
     if (owner !== who.owner && !this.isMember(name, who.owner)) return this.send(ws, JSON.stringify({ t: "error", error: `only people in ${name} can add or remove people there` }));
+
+    // Private channel protection: an unauthorized user cannot self-join an existing private channel
+    if (this.isPrivateChannel(name) && frame.op === "join") {
+      const existingMembers = this.sql.exec("SELECT 1 FROM channels WHERE name = ?", name).toArray();
+      if (existingMembers.length > 0 && !this.isMember(name, who.owner)) {
+        return this.send(ws, JSON.stringify({ t: "error", error: `${name} is private: an existing member must add you` }));
+      }
+    }
+
     if (frame.op === "join" || frame.op === "add") this.sql.exec("INSERT OR IGNORE INTO channels (name, owner) VALUES (?, ?)", name, owner);
     else if (frame.op === "leave") this.sql.exec("DELETE FROM channels WHERE name = ? AND owner = ?", name, owner);
     else return this.send(ws, JSON.stringify({ t: "error", error: "channel op is join, add or leave" }));
@@ -368,6 +431,12 @@ export class Line {
       const rows = this.sql.exec("SELECT owner, member, since FROM names ORDER BY owner").toArray();
       const removed = this.sql.exec("SELECT owner, at FROM removed_names ORDER BY owner").toArray();
       return json({ personal: Boolean(await this.adminKey()), members: rows.map((r) => ({ ...r, online: online.has(r.owner) })), removed, relay: RELAY_VERSION });
+    }
+    if (what === "member-check") {
+      const pass = request.headers.get("x-chamber-pass");
+      const err = await this.memberCheck(pass);
+      if (err) return json({ error: err }, 403);
+      return json({ ok: true });
     }
     if (what === "admin") return this.admin(await request.json().catch(() => ({})));
     if (what === "sync") {
@@ -452,6 +521,9 @@ export class Line {
     }
     if (what.startsWith("gate/") || what === "gates" || what.startsWith("gates/")) {
       return this.handleGate(what, request);
+    }
+    if (what === "coordination" || what.startsWith("coordination/")) {
+      return this.handleCoordination(what, request);
     }
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
@@ -784,12 +856,14 @@ export class Line {
           if (body.token && row.token !== body.token) return json({ error: "gate already exists" }, 409);
           return json({ ok: true, id, status: row.status });
         }
+        const gateToken = body.token || token;
+        if (!gateToken) return json({ error: "gate token is required" }, 400);
         const expiresAt = body.expiresAt || (Date.now() + (Number(body.expiresMinutes) || 60) * 60 * 1000);
         this.sql.exec(
           `INSERT INTO gates (id, token, line, sealed, description, action, requestedBy, status, createdAt, expiresAt)
            VALUES (?, ?, ?, ?, '', '', '', 'pending', ?, ?)`,
           id,
-          body.token || token,
+          gateToken,
           body.line || this.line || "",
           body.sealed || "",
           Date.now(),
@@ -836,7 +910,7 @@ export class Line {
       }
     }
 
-    if (gate.token && reqToken !== gate.token) {
+    if (!gate.token || reqToken !== gate.token) {
       if (request.headers.get("accept")?.includes("text/html")) {
         return new Response(gateUnauthorizedHtml(), {
           status: 401,
@@ -879,6 +953,266 @@ export class Line {
     return new Response(gateHtml(gate), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
+  }
+
+  // ----- shared coordination (Distributed ACP) --------------------------------
+
+  formatCoordTask(r) {
+    let files = [];
+    let evidence = null;
+    try { files = JSON.parse(r.files || "[]"); } catch {}
+    try { evidence = r.evidence ? JSON.parse(r.evidence) : null; } catch {}
+    return {
+      seq: r.seq,
+      id: r.id,
+      op: r.op,
+      status: r.status,
+      from: r.from_agent,
+      to: r.to_agent,
+      title: r.title,
+      description: r.description || "",
+      branch: r.branch || "",
+      contract: r.contract || null,
+      files,
+      evidence,
+      resolution: r.resolution || null,
+      rejectionReason: r.rejection_reason || null,
+      claimedBy: r.claimed_by || null,
+      idempotencyKey: r.idempotency_key || null,
+      deadlineMs: Number(r.deadline_ms),
+      createdAt: Number(r.created_at),
+      updatedAt: Number(r.updated_at),
+    };
+  }
+
+  broadcastCoordination(action, task) {
+    const frame = JSON.stringify({ t: "coord", action, task });
+    for (const { ws } of this.members()) this.send(ws, frame);
+  }
+
+  async handleCoordination(what, request) {
+    const url = new URL(request.url);
+    const sub = what.slice("coordination".length).replace(/^\/+/, "");
+    const now = Date.now();
+
+    // Enforce deadline expiry automatically for active tasks whose deadline has passed
+    this.sql.exec(`
+      UPDATE coordination_tasks
+      SET status = 'timed_out', updated_at = ?
+      WHERE deadline_ms < ? AND status NOT IN ('resolved', 'rejected', 'timed_out')
+    `, now, now);
+
+    if (request.method === "GET") {
+      if (!sub || sub === "list") {
+        const status = url.searchParams.get("status");
+        const op = url.searchParams.get("op");
+        const to = url.searchParams.get("to");
+        const from = url.searchParams.get("from");
+        const since = Number(url.searchParams.get("since") || 0);
+
+        let query = "SELECT * FROM coordination_tasks WHERE seq > ?";
+        const params = [since];
+        if (status) { query += " AND status = ?"; params.push(status); }
+        if (op) { query += " AND op = ?"; params.push(op); }
+        if (to) { query += " AND (to_agent = ? OR to_agent = ?)"; params.push(to, `@${to.replace(/^@/, "")}`); }
+        if (from) { query += " AND (from_agent = ? OR from_agent = ?)"; params.push(from, `@${from.replace(/^@/, "")}`); }
+        query += " ORDER BY updated_at DESC LIMIT 100";
+
+        const tasks = this.sql.exec(query, ...params).toArray().map((r) => this.formatCoordTask(r));
+        const maxSeq = this.sql.exec("SELECT MAX(seq) AS max_seq FROM coordination_tasks").toArray()[0]?.max_seq ?? 0;
+        return json({ tasks, maxSeq });
+      }
+
+      const task = this.sql.exec("SELECT * FROM coordination_tasks WHERE id = ?", sub).toArray()[0];
+      if (!task) return json({ error: "coordination task not found" }, 404);
+      return json({ task: this.formatCoordTask(task) });
+    }
+
+    if (request.method === "POST") {
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ error: "invalid json body" }, 400);
+      }
+
+      const action = sub || body.action || "request";
+
+      if (action === "request") {
+        const { id, op = "ask", from, to, title, description = "", branch = "", contract = null, files = [], deadlineMs, idempotencyKey } = body;
+        if (!from || !to) return json({ error: "from and to addresses are required" }, 400);
+        if (!title) return json({ error: "title is required" }, 400);
+
+        const taskId = id || crypto.randomUUID().replace(/-/g, "");
+        const ik = idempotencyKey || taskId;
+
+        // Idempotency: return existing canonical task if already submitted
+        const existing = this.sql.exec("SELECT * FROM coordination_tasks WHERE id = ? OR (idempotency_key IS NOT NULL AND idempotency_key = ?)", taskId, ik).toArray()[0];
+        if (existing) {
+          return json({ task: this.formatCoordTask(existing), alreadyExists: true });
+        }
+
+        const deadline = Number(deadlineMs) || (now + 30 * 60 * 1000);
+        const filesJson = JSON.stringify(Array.isArray(files) ? files : []);
+
+        this.sql.exec(`
+          INSERT INTO coordination_tasks (
+            id, op, status, from_agent, to_agent, title, description, branch, contract, files, idempotency_key, deadline_ms, created_at, updated_at
+          ) VALUES (?, ?, 'requested', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, taskId, op, from, to, title, description, branch, contract, filesJson, ik, deadline, now, now);
+
+        this.sql.exec(`
+          INSERT INTO coordination_events (task_id, op, status, agent, details, ts)
+          VALUES (?, ?, 'requested', ?, ?, ?)
+        `, taskId, op, from, JSON.stringify({ title, branch, contract }), now);
+
+        const created = this.sql.exec("SELECT * FROM coordination_tasks WHERE id = ?", taskId).toArray()[0];
+        const formatted = this.formatCoordTask(created);
+        this.broadcastCoordination("request", formatted);
+        return json({ task: formatted, alreadyExists: false }, 201);
+      }
+
+      const taskId = body.id || sub;
+      const task = this.sql.exec("SELECT * FROM coordination_tasks WHERE id = ?", taskId).toArray()[0];
+      if (!task) return json({ error: `coordination task "${taskId}" not found` }, 404);
+
+      if (action === "claim") {
+        const agent = String(body.agent || "");
+        if (!agent) return json({ error: "agent is required to claim task" }, 400);
+        if (task.status === "resolved") return json({ error: `task "${taskId}" is already resolved` }, 400);
+        if (task.status === "rejected") return json({ error: `task "${taskId}" is rejected` }, 400);
+        if (task.status === "timed_out") return json({ error: `task "${taskId}" has timed out` }, 400);
+
+        this.sql.exec(`
+          UPDATE coordination_tasks
+          SET status = 'claimed', claimed_by = ?, updated_at = ?
+          WHERE id = ?
+        `, agent, now, taskId);
+
+        this.sql.exec(`
+          INSERT INTO coordination_events (task_id, op, status, agent, details, ts)
+          VALUES (?, ?, 'claimed', ?, '{}', ?)
+        `, taskId, task.op, agent, now);
+
+        const updated = this.sql.exec("SELECT * FROM coordination_tasks WHERE id = ?", taskId).toArray()[0];
+        const formatted = this.formatCoordTask(updated);
+        this.broadcastCoordination("claim", formatted);
+        return json({ task: formatted });
+      }
+
+      if (action === "start" || action === "in_progress") {
+        const agent = String(body.agent || task.claimed_by || "");
+        if (task.status === "resolved" || task.status === "rejected" || task.status === "timed_out") {
+          return json({ error: `cannot start terminal task "${taskId}" (status: ${task.status})` }, 400);
+        }
+
+        this.sql.exec(`
+          UPDATE coordination_tasks
+          SET status = 'in_progress', claimed_by = COALESCE(?, claimed_by), updated_at = ?
+          WHERE id = ?
+        `, agent || null, now, taskId);
+
+        this.sql.exec(`
+          INSERT INTO coordination_events (task_id, op, status, agent, details, ts)
+          VALUES (?, ?, 'in_progress', ?, '{}', ?)
+        `, taskId, task.op, agent || task.from_agent, now);
+
+        const updated = this.sql.exec("SELECT * FROM coordination_tasks WHERE id = ?", taskId).toArray()[0];
+        const formatted = this.formatCoordTask(updated);
+        this.broadcastCoordination("start", formatted);
+        return json({ task: formatted });
+      }
+
+      if (action === "resolve") {
+        const by = String(body.by || "");
+        const resolution = String(body.resolution || "Resolved");
+        const evidenceJson = body.evidence ? JSON.stringify(body.evidence) : null;
+        const contract = body.contract || null;
+
+        if (task.status === "resolved") {
+          return json({ task: this.formatCoordTask(task), alreadyResolved: true });
+        }
+        if (task.status === "rejected" || task.status === "timed_out") {
+          return json({ error: `cannot resolve task "${taskId}" in status ${task.status}` }, 400);
+        }
+
+        this.sql.exec(`
+          UPDATE coordination_tasks
+          SET status = 'resolved', resolution = ?, evidence = ?, contract = COALESCE(?, contract), updated_at = ?
+          WHERE id = ?
+        `, resolution, evidenceJson, contract, now, taskId);
+
+        this.sql.exec(`
+          INSERT INTO coordination_events (task_id, op, status, agent, details, ts)
+          VALUES (?, ?, 'resolved', ?, ?, ?)
+        `, taskId, task.op, by, JSON.stringify({ resolution, contract }), now);
+
+        const updated = this.sql.exec("SELECT * FROM coordination_tasks WHERE id = ?", taskId).toArray()[0];
+        const formatted = this.formatCoordTask(updated);
+        this.broadcastCoordination("resolve", formatted);
+        return json({ task: formatted, alreadyResolved: false });
+      }
+
+      if (action === "reject") {
+        const by = String(body.by || "");
+        const reason = String(body.reason || "Declined by agent");
+
+        if (task.status === "resolved") {
+          return json({ error: `cannot reject already resolved task "${taskId}"` }, 400);
+        }
+
+        this.sql.exec(`
+          UPDATE coordination_tasks
+          SET status = 'rejected', rejection_reason = ?, updated_at = ?
+          WHERE id = ?
+        `, reason, now, taskId);
+
+        this.sql.exec(`
+          INSERT INTO coordination_events (task_id, op, status, agent, details, ts)
+          VALUES (?, ?, 'rejected', ?, ?, ?)
+        `, taskId, task.op, by, JSON.stringify({ reason }), now);
+
+        const updated = this.sql.exec("SELECT * FROM coordination_tasks WHERE id = ?", taskId).toArray()[0];
+        const formatted = this.formatCoordTask(updated);
+        this.broadcastCoordination("reject", formatted);
+        return json({ task: formatted });
+      }
+
+      if (action === "handoff") {
+        const fromAgent = String(body.fromAgent || task.claimed_by || task.to_agent);
+        const toAgent = String(body.toAgent || "");
+        const summary = String(body.summary || "");
+        const nextStep = String(body.nextStep || "");
+        const newFiles = Array.isArray(body.files) ? body.files : [];
+        if (!toAgent) return json({ error: "toAgent is required for handoff" }, 400);
+
+        let existingFiles = [];
+        try { existingFiles = JSON.parse(task.files || "[]"); } catch {}
+        const mergedFiles = [...new Set([...existingFiles, ...newFiles])];
+        const newDesc = `${summary}\n\nNext step: ${nextStep}`;
+
+        this.sql.exec(`
+          UPDATE coordination_tasks
+          SET op = 'handoff', status = 'requested', from_agent = ?, to_agent = ?, claimed_by = NULL,
+              description = ?, files = ?, updated_at = ?
+          WHERE id = ?
+        `, fromAgent, toAgent, newDesc, JSON.stringify(mergedFiles), now, taskId);
+
+        this.sql.exec(`
+          INSERT INTO coordination_events (task_id, op, status, agent, details, ts)
+          VALUES (?, 'handoff', 'requested', ?, ?, ?)
+        `, taskId, fromAgent, JSON.stringify({ toAgent, summary, nextStep }), now);
+
+        const updated = this.sql.exec("SELECT * FROM coordination_tasks WHERE id = ?", taskId).toArray()[0];
+        const formatted = this.formatCoordTask(updated);
+        this.broadcastCoordination("handoff", formatted);
+        return json({ task: formatted });
+      }
+
+      return json({ error: `unknown action "${action}"` }, 400);
+    }
+
+    return json({ error: "method not allowed" }, 405);
   }
 
   async webSocketClose(ws, code, reason) {

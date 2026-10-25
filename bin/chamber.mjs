@@ -2,6 +2,7 @@
 // chamber — your coding agents and your teammates' agents, talking over a tiny relay.
 //
 //   chamber desktop                 launch Chamber Desktop (local-first standalone app window)
+//   chamber deploy                  (admin) deploy Cloudflare relay & initialize chamber
 //   chamber start                   back in the chamber, any day: updates chamber, connects the project
 //                                   you are in, and opens the board (--no-board, --no-update)
 //   chamber board                   open the board: every conversation your agents are in
@@ -138,6 +139,26 @@ function gitTop() {
 
 async function main() {
   switch (command) {
+    case "deploy": {
+      const { deployRelay } = await import("../lib/deploy.mjs");
+      const owner = (opts.as || opts.name || defaultOwner()).toLowerCase();
+      console.log(`Setting up Chamber Relay on Cloudflare for @${owner}...`);
+      const res = await deployRelay({
+        owner,
+        projectPath: positionals[0] ? resolve(positionals[0]) : null,
+        onProgress: (msg) => console.log(msg),
+      });
+      console.log(`\n\x1b[1;32m✔ Chamber deployed and initialized!\x1b[0m`);
+      console.log(`Relay: ${res.relay}`);
+      console.log(`You are the admin: @${res.owner}`);
+      console.log(`\nTo invite teammates, run:`);
+      console.log(`  \x1b[1mchamber invite\x1b[0m`);
+      console.log(`\nOr send them this personal invite command:`);
+      console.log(`  ${res.inviteCommand}`);
+      console.log(`\nTo open the desktop app:`);
+      console.log(`  \x1b[1mchamber desktop\x1b[0m`);
+      return 0;
+    }
     case "new": {
       if (!opts.relay) throw new LineError("chamber new --relay https://<your relay>");
       const { claimRelay } = await import("../lib/admin.mjs");
@@ -306,6 +327,33 @@ async function main() {
 
       setTimeout(() => {
         try {
+          // 1. Check for packaged or compiled Tauri desktop app
+          const tauriCandidates = [
+            "/Applications/Chamber.app",
+            join(process.env.HOME || "", "Applications/Chamber.app"),
+            join(APP, "desktop/src-tauri/target/release/bundle/macos/Chamber.app"),
+            join(APP, "desktop/src-tauri/target/release/chamber-desktop"),
+            join(APP, "desktop/src-tauri/target/release/chamber"),
+            join(APP, "desktop/src-tauri/target/release/chamber-desktop.exe"),
+            join(APP, "desktop/src-tauri/target/release/chamber.exe"),
+            join(APP, "desktop/src-tauri/target/debug/chamber-desktop"),
+            join(APP, "desktop/src-tauri/target/debug/chamber"),
+            join(APP, "desktop/src-tauri/target/debug/chamber-desktop.exe"),
+            join(APP, "desktop/src-tauri/target/debug/chamber.exe"),
+            join(process.env.LOCALAPPDATA || "", "Programs/Chamber/Chamber.exe"),
+          ];
+          for (const bin of tauriCandidates) {
+            if (bin && existsSync(bin)) {
+              if (bin.endsWith(".app")) {
+                spawn("open", ["-a", bin], { stdio: "ignore", detached: true }).unref();
+              } else {
+                spawn(bin, [], { stdio: "ignore", detached: true }).unref();
+              }
+              return;
+            }
+          }
+
+          // 2. Standalone chromeless window fallback
           if (process.platform === "darwin") {
             const browsers = [
               "/Applications/Google Chrome.app",

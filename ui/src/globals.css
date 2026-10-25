@@ -1,7 +1,7 @@
 /* chamber: Slack's layout and Linear's calm, in root's (Tura's) design language:
  * - the ground is ruled paper (a fine 45° hatch); the main area floats on it as one card
- * - primary buttons are ink pills, never gradients; the brand dot is Tura blue
- * - orange is a micro-signal only: "waiting on you"
+ * - primary buttons are strictly black and white ink pills
+ * - color palette strictly uses Tura's 4 pastels (Blue, Mint, Lilac, Sand); no orange
  * Tokens are shadcn's, so the components copied from company-brain just work. */
 @import "tailwindcss";
 @import "tw-animate-css";
@@ -33,6 +33,10 @@
   --color-waiting: var(--waiting);
   --color-online: var(--online);
   --color-dot: var(--dot);
+  --color-pastel-blue: var(--pastel-blue);
+  --color-pastel-mint: var(--pastel-mint);
+  --color-pastel-lilac: var(--pastel-lilac);
+  --color-pastel-sand: var(--pastel-sand);
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
@@ -53,9 +57,13 @@
   --border: #e4e4e1;
   --ring: #4e83b0;
   --sidebar: transparent;
-  --waiting: #e3a473;
+  --waiting: #8db8d5; /* Tura pastel blue, no orange */
   --online: #70852f;
   --dot: #4e83b0;
+  --pastel-blue: #8db8d5;
+  --pastel-mint: #a8cbbb;
+  --pastel-lilac: #c5b4e3;
+  --pastel-sand: #dfd7ca;
   --ground:
     repeating-linear-gradient(-45deg, rgba(23, 57, 76, 0) 0 2px, rgba(23, 57, 76, 0.035) 2px 4px),
     linear-gradient(#f6f5f1, #f1f0ec);
@@ -75,9 +83,13 @@
   --border: #26272b;
   --ring: #4e83b0;
   --sidebar: transparent;
-  --waiting: #e3a473;
+  --waiting: #5a82a0; /* Tura pastel blue, no orange */
   --online: #8ba44a;
   --dot: #4e83b0;
+  --pastel-blue: #5a82a0;
+  --pastel-mint: #5e8473;
+  --pastel-lilac: #7d6b99;
+  --pastel-sand: #8c8275;
   --ground:
     repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0) 0 2px, rgba(255, 255, 255, 0.027) 2px 4px),
     linear-gradient(#050506, #0a0a0c);

@@ -61,6 +61,7 @@ after(() => {
     try { client.close(); } catch {}
   }
   try { process.kill(-relayProcess.pid, "SIGKILL"); } catch {}
+  setTimeout(() => process.exit(0), 100).unref();
 });
 
 function run(args, { home, input = "", cwd = ROOT, env = {} } = {}) {
@@ -106,7 +107,7 @@ function mcp(home, agent, cwd) {
     const result = await call("tools/call", { name, arguments: args });
     return { text: result.content[0].text, isError: result.isError };
   };
-  return { child, call, tool, close: () => child.stdin.end() };
+  return { child, call, tool, close: () => { try { lines.close(); } catch {} try { child.stdin.end(); } catch {} } };
 }
 
 test("sealing: the relay can route but not read, alter or re-attribute", async () => {
@@ -145,6 +146,14 @@ test("a project's Claude Code: asked, shown mid-task by the hook, woken when idl
     "memory_search",
     "memory_write",
     "memory_edit",
+    "coordinate_ask",
+    "coordinate_delegate",
+    "coordinate_review",
+    "coordinate_propose",
+    "coordinate_resolve",
+    "coordinate_handoff",
+    "coordinate_status",
+    "context_package",
   ]);
 
   await invite.ready();
@@ -323,7 +332,17 @@ test("chamber board: see a talk, answer it, close it, start one; only from this 
   children.add(board);
   const url = `http://127.0.0.1:${port}`;
   const get = async (path) => (await fetch(url + path)).json();
-  const post = (path, body, headers = {}) => fetch(url + path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+  let sessionToken = null;
+  const post = async (path, body, headers = {}) => {
+    if (!sessionToken) {
+      sessionToken = (await get("/api/board/session")).token;
+    }
+    const reqHeaders = { "content-type": "application/json", ...headers };
+    if (!reqHeaders["x-chamber-token"] && !headers.origin && sessionToken) {
+      reqHeaders["x-chamber-token"] = sessionToken;
+    }
+    return fetch(url + path, { method: "POST", headers: reqHeaders, body: JSON.stringify(body) });
+  };
   let data;
   for (let i = 0; i < 100; i++) {
     try {
@@ -413,7 +432,8 @@ test("names: optional to join, changeable anytime, records move with you, never 
     } catch {}
     await sleep(100);
   }
-  const renamed = await fetch(`${url}/api/board/name`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "nitin-k" }) });
+  const sess = await (await fetch(`${url}/api/board/session`)).json();
+  const renamed = await fetch(`${url}/api/board/name`, { method: "POST", headers: { "content-type": "application/json", "x-chamber-token": sess.token }, body: JSON.stringify({ name: "nitin-k" }) });
   assert.equal((await renamed.json()).name, "nitin-k");
   let data;
   for (let i = 0; i < 100; i++) {
@@ -576,6 +596,30 @@ test("channels: boards hear everything, Claude Code only @mentions; offline gets
   await sleep(300);
   assert.equal(boardGot.length, opsBefore + 1);
   assert.equal(boardGot.at(-1).to, "#ops");
+
+  // Private channel isolation: non-members cannot see or self-join #p- prefixed channels
+  await nitBoard.channel("join", "#p-security");
+  await sleep(300);
+  assert.ok(nitBoard.channels.some((c) => c.name === "#p-security"), "creator is in private channel");
+  assert.ok(!ashBoard.channels.some((c) => c.name === "#p-security"), "outsiders cannot see private channel");
+
+  let privateRefusal = "";
+  const refusalListener = (e) => {
+    try {
+      const f = JSON.parse(String(e.data));
+      if (f.t === "error") privateRefusal = f.error;
+    } catch {}
+  };
+  ashBoard.ws.addEventListener("message", refusalListener);
+  await ashBoard.channel("join", "#p-security");
+  await sleep(300);
+  assert.match(privateRefusal, /private: an existing member must add you/i);
+
+  // When added by member, now they are admitted
+  await nitBoard.channel("add", "#p-security", "ashish");
+  await sleep(300);
+  assert.ok(ashBoard.channels.some((c) => c.name === "#p-security"), "added member now in private channel");
+
   for (const c of [ashBoard, back, nitBoard]) c.close();
 });
 

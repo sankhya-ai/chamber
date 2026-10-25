@@ -79,7 +79,7 @@ export function AgentInspectorDialog({
           {/* Permission & Architecture Notice */}
           <div className="rounded-lg border bg-muted/20 p-3.5 text-xs space-y-1.5">
             <div className="flex items-center gap-1.5 font-medium text-foreground">
-              <ShieldCheck className="size-4 text-emerald-500" />
+              <ShieldCheck className="size-4 text-[#36634d] dark:text-[#a8cbbb]" />
               <span>Local Execution & Existing Permissions</span>
             </div>
             <p className="text-muted-foreground leading-relaxed">
@@ -105,13 +105,13 @@ export function AgentInspectorDialog({
                     <div className="flex items-start justify-between">
                       <div className="space-y-0.5">
                         <div className="flex items-center gap-2">
-                          <Folder className={cn("size-4", online ? "text-emerald-500" : "text-muted-foreground")} />
+                          <Folder className={cn("size-4", online ? "text-[#36634d] dark:text-[#a8cbbb]" : "text-muted-foreground")} />
                           <h4 className="font-semibold text-xs text-foreground">{p.name}</h4>
                           <span
                             className={cn(
                               "rounded px-1.5 py-0.5 text-[10px] font-mono",
                               online
-                                ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-medium"
+                                ? "bg-[#a8cbbb]/20 text-[#36634d] dark:text-[#a8cbbb] font-medium"
                                 : "bg-muted text-muted-foreground"
                             )}
                           >
@@ -147,14 +147,14 @@ export function AgentInspectorDialog({
                             className={cn(
                               "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs",
                               a.online
-                                ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-700 dark:text-emerald-300 font-medium"
+                                ? "bg-[#a8cbbb]/15 border-[#a8cbbb]/30 text-[#36634d] dark:text-[#a8cbbb] font-medium"
                                 : "bg-muted/40 border-border text-muted-foreground"
                             )}
                           >
                             <span
                               className={cn(
                                 "size-1.5 rounded-full",
-                                a.online ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground/40"
+                                a.online ? "bg-[#a8cbbb] animate-pulse" : "bg-muted-foreground/40"
                               )}
                             />
                             <span>{label}</span>

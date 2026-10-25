@@ -1,2 +1,7 @@
 node_modules/
 .wrangler/
+target/
+**/target/
+**/gen/
+.DS_Store
+*.log

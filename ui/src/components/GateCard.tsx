@@ -95,7 +95,7 @@ export function GateCard({
           ) : status === "rejected" ? (
             <X className="size-4.5 text-destructive shrink-0" />
           ) : (
-            <ShieldAlert className="size-4.5 text-amber-500 shrink-0" />
+            <ShieldAlert className="size-4.5 text-foreground shrink-0" />
           )}
           <div>
             <div className="flex items-center gap-2">
@@ -109,7 +109,7 @@ export function GateCard({
 
         <div className="flex items-center gap-2">
           {timeLeft && status === "pending" ? (
-            <span className="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400 font-mono">
+            <span className="flex items-center gap-1 text-[11px] text-muted-foreground font-mono">
               <Clock className="size-3" />
               {timeLeft}
             </span>
@@ -118,10 +118,10 @@ export function GateCard({
             className={cn(
               "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium capitalize",
               status === "approved"
-                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                ? "bg-[#a8cbbb]/20 text-[#36634d] dark:text-[#a8cbbb]"
                 : status === "rejected"
                 ? "bg-destructive/10 text-destructive"
-                : "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                : "bg-muted text-foreground"
             )}
           >
             {status}
@@ -140,7 +140,7 @@ export function GateCard({
           <div className="flex items-center gap-1.5 text-muted-foreground text-[10px] uppercase font-semibold tracking-wider mb-1">
             <Terminal className="size-3" /> Target Command
           </div>
-          <code className="text-emerald-600 dark:text-emerald-400 break-all select-all font-mono">$ {command}</code>
+          <code className="text-foreground break-all select-all font-mono">$ {command}</code>
         </div>
       ) : null}
 
@@ -184,8 +184,8 @@ export function GateCard({
 
       {/* Self-approval policy alert */}
       {isSelfRequest && status === "pending" ? (
-        <div className="mt-2 flex items-center gap-1.5 rounded bg-amber-500/10 border border-amber-500/20 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
-          <AlertTriangle className="size-3.5 shrink-0 text-amber-500" />
+        <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-muted/40 border px-2.5 py-1.5 text-[11px] text-muted-foreground">
+          <AlertTriangle className="size-3.5 shrink-0 text-muted-foreground" />
           <span>
             <strong>Self-Approval Policy:</strong> Requested by your agent ({requestedBy}). Standard policy recommends approval by a second teammate.
           </span>
@@ -199,9 +199,10 @@ export function GateCard({
         <div className="mt-3 flex items-center gap-2 pt-2 border-t border-border/40">
           <Button
             size="sm"
+            variant="default"
             disabled={loading}
             onClick={() => handleDecision("approve")}
-            className="h-7.5 bg-emerald-600 px-3.5 text-[12px] font-medium text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 shadow-xs"
+            className="h-8 px-3.5 text-xs font-medium"
           >
             <Check className="mr-1.5 size-3.5" /> Approve Action
           </Button>
@@ -210,7 +211,7 @@ export function GateCard({
             variant="outline"
             disabled={loading}
             onClick={() => handleDecision("reject")}
-            className="h-7.5 border-destructive/30 px-3 text-[12px] text-destructive hover:bg-destructive/10"
+            className="h-8 px-3 text-xs"
           >
             <X className="mr-1.5 size-3.5" /> Reject
           </Button>

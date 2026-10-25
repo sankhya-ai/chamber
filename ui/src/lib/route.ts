@@ -14,19 +14,22 @@ export function parse(hash: string): Route {
   const [kind, ...rest] = path.split("/");
   const arg = decodeURIComponent(rest.join("/"));
   const view: View =
-    kind === "all" ? { kind: "all" }
+    kind === "work" ? { kind: "work" }
+    : kind === "inbox" ? { kind: "inbox" }
+    : kind === "all" ? { kind: "all" }
     : kind === "memory" ? { kind: "memory" }
     : kind === "project" && arg ? { kind: "project", path: arg }
     : kind === "c" && arg ? { kind: "channel", name: `#${arg}` }
     : kind === "p" && arg ? { kind: "person", owner: arg }
     : kind === "a" && arg ? { kind: "agent", agent: arg }
-    : { kind: "inbox" };
+    : { kind: "work" };
   return { view, talk };
 }
 
 export function format({ view, talk }: Route): string {
   const path =
-    view.kind === "all" ? "all"
+    view.kind === "work" ? "work"
+    : view.kind === "all" ? "all"
     : view.kind === "memory" ? "memory"
     : view.kind === "project" ? `project/${encodeURIComponent(view.path)}`
     : view.kind === "channel" ? `c/${encodeURIComponent(view.name.slice(1))}`

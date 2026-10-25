@@ -194,8 +194,8 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
                           <Hash className="size-3.5 text-muted-foreground" />
                         </div>
                       ) : isAgent ? (
-                        <div className="flex size-5 items-center justify-center rounded bg-amber-500/15">
-                          <Bot className="size-3.5 text-amber-500" />
+                        <div className="flex size-5 items-center justify-center rounded bg-[#c5b4e3]/20">
+                          <Bot className="size-3.5 text-[#604988] dark:text-[#c5b4e3]" />
                         </div>
                       ) : (
                         <Avatar name={item} size={20} />
@@ -229,20 +229,6 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
 
           return (
             <div key={m.id} className={cn("group relative flex gap-3", grouped ? "mt-0.5" : "mt-4 first:mt-0")}>
-              {/* Quick Hover Reactions Bar */}
-              <div className="absolute -top-3 right-2 hidden group-hover:flex items-center gap-0.5 rounded-full border bg-background/95 px-1 py-0.5 shadow-md backdrop-blur-xs text-xs z-10">
-                {["👍", "❤️", "👀", "🚀", "✅"].map((emoji) => (
-                  <button
-                    key={emoji}
-                    onClick={() => void handleReaction(m.id, emoji)}
-                    className="size-6 rounded-full hover:bg-accent flex items-center justify-center transition-transform hover:scale-125"
-                    title={`React ${emoji}`}
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </div>
-
               <div className="w-7 shrink-0">{grouped ? null : <Avatar name={personOf(m.from, me)} size={28} />}</div>
               <div className="min-w-0 flex-1">
                 {grouped ? null : (
@@ -269,17 +255,18 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
                   <MessageContent text={m.text} />
                 )}
 
-                {/* Reaction Chips */}
-                {m.reactions && Object.keys(m.reactions).length > 0 ? (
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {Object.entries(m.reactions).map(([emoji, users]) => {
+                {/* Reactions and Quick Emoji Picker (Below the message) */}
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  {/* Reaction Chips */}
+                  {m.reactions && Object.keys(m.reactions).length > 0 ? (
+                    Object.entries(m.reactions).map(([emoji, users]) => {
                       const hasMine = users.includes(me);
                       return (
                         <button
                           key={emoji}
                           onClick={() => void handleReaction(m.id, emoji)}
                           className={cn(
-                            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-colors",
+                            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-colors cursor-pointer",
                             hasMine
                               ? "border-primary/40 bg-primary/10 text-primary font-semibold"
                               : "border-border/60 bg-muted/40 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -290,9 +277,23 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
                           <span className="text-[11px] font-mono">{users.length}</span>
                         </button>
                       );
-                    })}
+                    })
+                  ) : null}
+
+                  {/* Quick Reactions Bar - appears cleanly below the message on hover */}
+                  <div className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-0.5 rounded-full border border-border/70 bg-card/90 px-1 py-0.5 shadow-2xs backdrop-blur-xs text-xs">
+                    {["👍", "❤️", "👀", "🚀", "✅"].map((emoji) => (
+                      <button
+                        key={emoji}
+                        onClick={() => void handleReaction(m.id, emoji)}
+                        className="size-5.5 rounded-full hover:bg-accent flex items-center justify-center transition-transform hover:scale-125 cursor-pointer text-xs"
+                        title={`React ${emoji}`}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
                   </div>
-                ) : null}
+                </div>
 
                 {m.files?.length ? (
                   <div className="mt-2 flex flex-col gap-2">

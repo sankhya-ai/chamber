@@ -2,9 +2,12 @@ import { ArrowRight, Cloud, Folder, Loader2, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
   const [mode, setMode] = useState<"join" | "new">("join");
+  const [createMethod, setCreateMethod] = useState<"auto" | "url">("auto");
+  const [cfAuth, setCfAuth] = useState<{ authenticated: boolean; account: string | null } | null>(null);
   const [invite, setInvite] = useState("");
   const [relay, setRelay] = useState("");
   const [handle, setHandle] = useState("");
@@ -26,6 +29,10 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
       },
       () => undefined
     );
+    api.cloudflareAuth().then(
+      (res) => setCfAuth(res),
+      () => undefined
+    );
   }, []);
 
   const handleJoin = async (e: React.FormEvent) => {
@@ -41,6 +48,19 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
       onConfigured();
     } catch (err: any) {
       setError(err?.message || "Failed to join chamber. Please check your invite pass.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCloudflareAutoDeploy = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      await api.cloudflareSetup(handle.trim() || undefined, projectPath || undefined);
+      onConfigured();
+    } catch (err: any) {
+      setError(err?.message || "Failed to deploy Cloudflare relay. Please check your credentials.");
     } finally {
       setLoading(false);
     }
@@ -77,7 +97,7 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
         {/* Brand Header */}
         <div className="text-center">
           <div className="inline-flex items-center gap-2 rounded-full border bg-muted/40 px-3 py-1 text-xs font-mono font-medium text-muted-foreground mb-4">
-            <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="size-2 rounded-full bg-[#a8cbbb] animate-pulse" />
             <span>Local-First Coding Agent Network</span>
           </div>
           <h1 className="flex items-center justify-center gap-1.5 text-2xl font-bold tracking-tight text-foreground">
@@ -176,27 +196,27 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
                 </span>
                 <div className="flex flex-wrap gap-2">
                   <span className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium ${
-                    harnesses.claude ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-muted text-muted-foreground"
+                    harnesses.claude ? "bg-[#a8cbbb]/20 text-[#36634d] dark:text-[#a8cbbb]" : "bg-muted text-muted-foreground"
                   }`}>
-                    <span className={`size-1.5 rounded-full ${harnesses.claude ? "bg-emerald-500" : "bg-muted-foreground"}`} />
+                    <span className={`size-1.5 rounded-full ${harnesses.claude ? "bg-[#a8cbbb]" : "bg-muted-foreground"}`} />
                     Claude Code
                   </span>
                   <span className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium ${
-                    harnesses.codex ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-muted text-muted-foreground"
+                    harnesses.codex ? "bg-[#a8cbbb]/20 text-[#36634d] dark:text-[#a8cbbb]" : "bg-muted text-muted-foreground"
                   }`}>
-                    <span className={`size-1.5 rounded-full ${harnesses.codex ? "bg-emerald-500" : "bg-muted-foreground"}`} />
+                    <span className={`size-1.5 rounded-full ${harnesses.codex ? "bg-[#a8cbbb]" : "bg-muted-foreground"}`} />
                     Codex
                   </span>
                   <span className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium ${
-                    harnesses.antigravity ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-muted text-muted-foreground"
+                    harnesses.antigravity ? "bg-[#a8cbbb]/20 text-[#36634d] dark:text-[#a8cbbb]" : "bg-muted text-muted-foreground"
                   }`}>
-                    <span className={`size-1.5 rounded-full ${harnesses.antigravity ? "bg-emerald-500" : "bg-muted-foreground"}`} />
+                    <span className={`size-1.5 rounded-full ${harnesses.antigravity ? "bg-[#a8cbbb]" : "bg-muted-foreground"}`} />
                     Antigravity
                   </span>
                   <span className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium ${
-                    harnesses.dsh ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-muted text-muted-foreground"
+                    harnesses.dsh ? "bg-[#a8cbbb]/20 text-[#36634d] dark:text-[#a8cbbb]" : "bg-muted text-muted-foreground"
                   }`}>
-                    <span className={`size-1.5 rounded-full ${harnesses.dsh ? "bg-emerald-500" : "bg-muted-foreground"}`} />
+                    <span className={`size-1.5 rounded-full ${harnesses.dsh ? "bg-[#a8cbbb]" : "bg-muted-foreground"}`} />
                     DeepSeek Harness
                   </span>
                 </div>
@@ -220,71 +240,145 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
             </Button>
           </form>
         ) : (
-          <form onSubmit={handleCreate} className="mt-6 space-y-4">
+          <div className="mt-6 space-y-4">
             <div>
               <label className="block text-xs font-medium text-foreground mb-1.5">
-                Your Cloudflare Relay URL
-              </label>
-              <input
-                type="url"
-                required
-                value={relay}
-                onChange={(e) => setRelay(e.target.value)}
-                placeholder="https://my-chamber.my-subdomain.workers.dev"
-                className="w-full font-mono text-xs rounded-lg border bg-background p-2.5 outline-none focus:border-ring focus:ring-1 focus:ring-ring"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-foreground mb-1.5">
-                Admin Handle
+                Admin Handle / Name
               </label>
               <input
                 type="text"
                 value={handle}
                 onChange={(e) => setHandle(e.target.value)}
-                placeholder="e.g. admin or your name"
+                placeholder="e.g. admin or your name (default: git username)"
                 className="w-full text-xs rounded-lg border bg-background p-2.5 outline-none focus:border-ring focus:ring-1 focus:ring-ring"
               />
             </div>
 
-            <div className="rounded-xl border bg-muted/20 p-4 space-y-2 text-xs text-muted-foreground">
-              <div className="flex items-center gap-2 font-medium text-foreground">
-                <Cloud className="size-4 text-primary" />
-                Cloudflare-Owned Serverless Relay
-              </div>
-              <p className="leading-relaxed">
-                The relay coordinates messages, membership, and encrypted attachments using Durable Objects and R2. Chamber operates no central backend for your team.
-              </p>
-              <p className="text-[11px] text-muted-foreground pt-1">
-                Haven't deployed the worker yet?{" "}
-                <a
-                  href="https://deploy.workers.cloudflare.com/?url=https://github.com/tura-learn/chamber/tree/main/relay"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-primary hover:underline font-semibold"
-                >
-                  Deploy to Cloudflare in 2 minutes →
-                </a>
-              </p>
+            {/* Cloudflare Deploy Method Toggle */}
+            <div className="flex gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => setCreateMethod("auto")}
+                className={cn(
+                  "flex-1 rounded-lg border p-3 text-left transition-all",
+                  createMethod === "auto" ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-border hover:bg-muted/40"
+                )}
+              >
+                <div className="flex items-center gap-2 font-semibold text-foreground">
+                  <Cloud className="size-4 text-primary" />
+                  1-Click Cloudflare Setup
+                </div>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Automated relay deployment using your Cloudflare account. Opens browser for sign-in.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCreateMethod("url")}
+                className={cn(
+                  "flex-1 rounded-lg border p-3 text-left transition-all",
+                  createMethod === "url" ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-border hover:bg-muted/40"
+                )}
+              >
+                <div className="flex items-center gap-2 font-semibold text-foreground">
+                  <Sparkles className="size-4 text-primary" />
+                  Enter Worker URL
+                </div>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  If you already deployed via the Deploy button or a custom domain.
+                </p>
+              </button>
             </div>
 
-            <Button
-              type="submit"
-              disabled={loading || !relay.trim()}
-              className="w-full gap-2 text-xs h-10 font-medium"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" /> Claiming Relay & Initializing…
-                </>
-              ) : (
-                <>
-                  Initialize Chamber <Sparkles className="size-4" />
-                </>
-              )}
-            </Button>
-          </form>
+            {createMethod === "auto" ? (
+              <div className="rounded-xl border bg-card p-4 space-y-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Cloudflare Account:</span>
+                  {cfAuth?.authenticated ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#a8cbbb]/20 px-2 py-0.5 font-medium text-[#36634d] dark:text-[#a8cbbb]">
+                      <span className="size-1.5 rounded-full bg-[#a8cbbb]" />
+                      {cfAuth.account || "Signed In"}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#c5b4e3]/20 px-2 py-0.5 font-medium text-[#604988] dark:text-[#c5b4e3]">
+                      <span className="size-1.5 rounded-full bg-[#c5b4e3] animate-pulse" />
+                      Browser Login Required
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  This deploys the stateless Chamber relay worker and provisions encrypted attachment storage on your own Cloudflare account. Your admin Ed25519 key remains strictly on this machine.
+                </p>
+
+                <Button
+                  type="button"
+                  onClick={handleCloudflareAutoDeploy}
+                  disabled={loading}
+                  className="w-full gap-2 text-xs h-10 font-medium"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" /> Deploying to Cloudflare & Initializing…
+                    </>
+                  ) : (
+                    <>
+                      Deploy Relay & Start Chamber (Admin) <ArrowRight className="size-4" />
+                    </>
+                  )}
+                </Button>
+              </div>
+            ) : (
+              <form onSubmit={handleCreate} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-foreground mb-1.5">
+                    Your Cloudflare Relay URL
+                  </label>
+                  <input
+                    type="url"
+                    required
+                    value={relay}
+                    onChange={(e) => setRelay(e.target.value)}
+                    placeholder="https://my-chamber.my-subdomain.workers.dev"
+                    className="w-full font-mono text-xs rounded-lg border bg-background p-2.5 outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+                  />
+                </div>
+
+                <div className="rounded-xl border bg-muted/20 p-4 space-y-2 text-xs text-muted-foreground">
+                  <p className="leading-relaxed">
+                    Deploy with one click to your free Cloudflare account:
+                  </p>
+                  <p className="text-[11px] text-muted-foreground pt-1">
+                    <a
+                      href="https://deploy.workers.cloudflare.com/?url=https://github.com/tura-learn/chamber/tree/main/relay"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-primary hover:underline font-semibold"
+                    >
+                      Deploy to Cloudflare in 2 minutes →
+                    </a>
+                  </p>
+                </div>
+
+                <Button
+                  type="submit"
+                  disabled={loading || !relay.trim()}
+                  className="w-full gap-2 text-xs h-10 font-medium"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" /> Claiming Relay & Initializing…
+                    </>
+                  ) : (
+                    <>
+                      Initialize Chamber <Sparkles className="size-4" />
+                    </>
+                  )}
+                </Button>
+              </form>
+            )}
+          </div>
         )}
       </div>
     </div>

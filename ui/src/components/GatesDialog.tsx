@@ -36,7 +36,7 @@ export function GatesDialog({ open, onOpenChange, me = "", onChanged }: GatesDia
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <div className="flex items-center gap-2">
-            <Shield className="size-5 text-amber-500" />
+            <Shield className="size-5 text-[#8db8d5]" />
             <DialogTitle>Approval Gates</DialogTitle>
           </div>
           <DialogDescription>

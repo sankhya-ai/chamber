@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Check, Cpu, Folder, Hash, Inbox, Layers, Moon, Plus, Settings, Shield, Sun, UserPlus, Users, X } from "lucide-react";
+import { BookOpen, Bot, Check, Cpu, Folder, Hash, Inbox, Layers, Moon, Plus, Search, Settings, Shield, Sun, UserPlus, Users, X } from "lucide-react";
 import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
@@ -25,6 +25,7 @@ interface Props {
   onAway?: () => void;
   onSettings?: () => void;
   onTheme: () => void;
+  onOpenAgents?: () => void;
   onChanged: () => void;
 }
 
@@ -81,7 +82,7 @@ export function Sidebar({
   awayActive = false,
   awayStatusText = "",
   onView,
-  onSearch: _onSearch,
+  onSearch,
   onNewChannel,
   onInvite,
   onMembers,
@@ -90,6 +91,7 @@ export function Sidebar({
   onAway,
   onSettings,
   onTheme,
+  onOpenAgents,
   onChanged,
 }: Props) {
   const [naming, setNaming] = useState<string | null>(null);
@@ -128,7 +130,7 @@ export function Sidebar({
               className={cn(
                 "rounded px-1.5 py-0.5 text-[10px] font-medium tracking-tight",
                 data.quota.warning
-                  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                  ? "bg-[#c5b4e3]/20 text-[#604988] dark:text-[#c5b4e3]"
                   : "bg-muted text-muted-foreground"
               )}
               title={`Cloudflare DO Daily Quota: ${data.quota.dailyRequests.toLocaleString()} / ${data.quota.dailyRequestsLimit.toLocaleString()} requests (${data.quota.requestsPercentage}%)`}
@@ -141,6 +143,34 @@ export function Sidebar({
       </div>
 
       <nav className="scroll-thin flex-1 overflow-y-auto">
+        <Row
+          active={false}
+          onClick={() => onSearch?.()}
+          end={
+            <span className="rounded bg-muted/60 px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground border border-border/60">
+              ⌘K
+            </span>
+          }
+        >
+          <Search className="size-4 text-muted-foreground" /> Search
+        </Row>
+        <Row
+          active={same(view, { kind: "work" })}
+          onClick={() => onView({ kind: "work" })}
+          end={
+            pendingGatesCount > 0 ? (
+              <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+                {pendingGatesCount}
+              </span>
+            ) : activeCoordinationCount > 0 ? (
+              <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-1 text-[10px] font-semibold text-foreground">
+                {activeCoordinationCount}
+              </span>
+            ) : null
+          }
+        >
+          <Cpu className="size-4" /> Team Work
+        </Row>
         <Row active={same(view, { kind: "inbox" })} onClick={() => onView({ kind: "inbox" })} end={waiting ? <Count n={waiting} /> : null}>
           <Inbox className="size-4" /> Inbox
         </Row>
@@ -152,26 +182,26 @@ export function Sidebar({
           onClick={() => onCoordination?.()}
           end={
             activeCoordinationCount > 0 ? (
-              <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-violet-600 px-1 text-[10px] font-semibold text-white">
+              <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
                 {activeCoordinationCount}
               </span>
             ) : null
           }
         >
-          <Cpu className="size-4 text-violet-500" /> Agent Tasks
+          <Cpu className="size-4 text-muted-foreground" /> Agent Tasks
         </Row>
         <Row
           active={false}
           onClick={() => onGates?.()}
           end={
             pendingGatesCount > 0 ? (
-              <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">
+              <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
                 {pendingGatesCount}
               </span>
             ) : null
           }
         >
-          <Shield className="size-4 text-amber-500" /> Approval Gates
+          <Shield className="size-4 text-muted-foreground" /> Approval Gates
         </Row>
         <Row active={same(view, { kind: "memory" })} onClick={() => onView({ kind: "memory" })}>
           <BookOpen className="size-4" /> Team Memory
@@ -200,18 +230,32 @@ export function Sidebar({
           {people(data).length === 0 ? <p className="px-2 text-muted-foreground">Nobody yet. Invite someone.</p> : null}
         </Section>
 
-        <Section title="Agents & Workspaces" action={<IconButton label="Add a project folder" onClick={() => void addProject()}><Plus className="size-3.5" /></IconButton>}>
+        <Section
+          title="Agents & Workspaces"
+          action={
+            <div className="flex items-center gap-0.5">
+              {onOpenAgents ? (
+                <IconButton label="Inspect coding agents" onClick={onOpenAgents}>
+                  <Bot className="size-3.5" />
+                </IconButton>
+              ) : null}
+              <IconButton label="Add a project folder" onClick={() => void addProject()}>
+                <Plus className="size-3.5" />
+              </IconButton>
+            </div>
+          }
+        >
           {awayActive ? (
             <Row
               active={false}
               onClick={() => onAway?.()}
               end={
-                <span className="rounded bg-amber-500/15 px-1 text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground font-medium">
                   auto-reply
                 </span>
               }
             >
-              <Bot className="size-3.5 text-amber-500 shrink-0" />
+              <Bot className="size-3.5 text-muted-foreground shrink-0" />
               <span className="truncate">@{me}/away</span>
             </Row>
           ) : null}
@@ -254,10 +298,10 @@ export function Sidebar({
                         title={`${kindLabel}${a.online ? " · connected" : " · not running"}`}
                         className={cn(
                           "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium tracking-tight",
-                          a.online ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-semibold" : "bg-muted text-muted-foreground"
+                          a.online ? "bg-[#a8cbbb]/20 text-[#36634d] dark:text-[#a8cbbb] font-semibold" : "bg-muted text-muted-foreground"
                         )}
                       >
-                        <span className={cn("size-1.5 rounded-full", a.online ? "bg-emerald-500" : "bg-muted-foreground/40")} />
+                        <span className={cn("size-1.5 rounded-full", a.online ? "bg-[#a8cbbb]" : "bg-muted-foreground/40")} />
                         {kindLabel}
                       </span>
                     );
@@ -291,11 +335,11 @@ export function Sidebar({
           className={cn(
             "flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium border transition-colors",
             awayActive
-              ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+              ? "border-border bg-muted/40 text-foreground"
               : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground"
           )}
         >
-          <span className={cn("size-2 rounded-full", awayActive ? "bg-amber-500 animate-pulse" : "bg-emerald-500")} />
+          <span className={cn("size-2 rounded-full", awayActive ? "bg-[#8db8d5]" : "bg-[#a8cbbb]")} />
           <span>{awayActive ? "Away" : "Active"}</span>
         </button>
 

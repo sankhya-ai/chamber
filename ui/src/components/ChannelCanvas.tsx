@@ -83,7 +83,7 @@ export function ChannelCanvas({ channelName }: ChannelCanvasProps) {
           onClick={() => setOpen((v) => !v)}
           className="flex items-center gap-1.5 font-medium text-muted-foreground hover:text-foreground"
         >
-          <Pin className="size-3.5 text-amber-500" />
+          <Pin className="size-3.5 text-[#8db8d5]" />
           <span>Canvas</span>
           <span className="font-mono text-[11px] text-muted-foreground/70">({cleanName})</span>
           {open ? <ChevronDown className="size-3 text-muted-foreground" /> : <ChevronRight className="size-3 text-muted-foreground" />}

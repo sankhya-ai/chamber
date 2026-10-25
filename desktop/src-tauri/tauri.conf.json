@@ -4,8 +4,8 @@
   "version": "0.2.0",
   "identifier": "com.turalearn.chamber",
   "build": {
-    "beforeDevCommand": "npm --prefix ../ui run build",
-    "beforeBuildCommand": "npm --prefix ../ui run build",
+    "beforeDevCommand": "npm --prefix ../../ui run build",
+    "beforeBuildCommand": "npm --prefix ../../ui run build",
     "devUrl": "http://127.0.0.1:7878",
     "frontendDist": "../../board"
   },

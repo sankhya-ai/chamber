@@ -17,6 +17,8 @@ import setup from "../../lib/setup.mjs";
 import board from "../../lib/board.mjs";
 import admin from "../../lib/admin.mjs";
 import away from "../../lib/away.mjs";
+import coordination from "../../lib/coordination.mjs";
+import deploy from "../../lib/deploy.mjs";
 import dreamLib from "../../lib/dream.mjs";
 import harnesses from "../../lib/harnesses.mjs";
 import memory from "../../lib/memory.mjs";
@@ -38,6 +40,8 @@ const FILES = {
   "lib/board.mjs": board,
   "lib/admin.mjs": admin,
   "lib/away.mjs": away,
+  "lib/coordination.mjs": coordination,
+  "lib/deploy.mjs": deploy,
   "lib/dream.mjs": dreamLib,
   "lib/harnesses.mjs": harnesses,
   "lib/memory.mjs": memory,

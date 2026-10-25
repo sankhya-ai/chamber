@@ -1,8 +1,7 @@
-import { Cpu, LayoutGrid, List, Plus, Shield, Users } from "lucide-react";
+import { LayoutGrid, List, Plus, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AgentInspectorDialog } from "@/components/AgentInspectorDialog";
-import { AppTopChrome } from "@/components/AppTopChrome";
 import { AwayDialog } from "@/components/AwayDialog";
 import { CommandMenu } from "@/components/CommandMenu";
 import { Composer } from "@/components/Composer";
@@ -12,10 +11,10 @@ import { ChannelDialog, ChannelMembersDialog, InviteDialog, MembersDialog } from
 import { GatesDialog } from "@/components/GatesDialog";
 import { MemoryView } from "@/components/MemoryView";
 import { OnboardingView } from "@/components/OnboardingView";
-import { SearchBar } from "@/components/SearchBar";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { Sidebar } from "@/components/Sidebar";
 import { TalkList } from "@/components/TalkList";
+import { TeamWorkView } from "@/components/TeamWorkView";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { api } from "@/lib/api";
@@ -43,6 +42,7 @@ function persist(key: string, value: string) {
 }
 
 const EMPTY: Record<View["kind"], string> = {
+  work: "No active obligations yet.",
   inbox: "You're all caught up.",
   all: "No talks yet. Start one, or wait for a teammate's agent to ask.",
   channel: "Nothing said here yet.",
@@ -111,6 +111,8 @@ export function App() {
   }, []);
 
   const prevUnreadRef = useRef<number>(0);
+  const prevGatesRef = useRef<number>(0);
+
   useEffect(() => {
     if (!data) return;
     const totalUnread = data.cards.filter((c) => c.unread).length;
@@ -129,6 +131,20 @@ export function App() {
     }
     prevUnreadRef.current = totalUnread;
   }, [data]);
+
+  // Obligation attention model: notify immediately when an approval gate needs human review
+  useEffect(() => {
+    if (
+      typeof Notification !== "undefined" &&
+      Notification.permission === "granted" &&
+      pendingGatesCount > prevGatesRef.current
+    ) {
+      new Notification("Chamber: Action Required", {
+        body: `${pendingGatesCount} approval gate${pendingGatesCount === 1 ? "" : "s"} require your review to proceed.`,
+      });
+    }
+    prevGatesRef.current = pendingGatesCount;
+  }, [pendingGatesCount]);
 
   useEffect(() => {
     refresh();
@@ -185,26 +201,9 @@ export function App() {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
-        <AppTopChrome
+      <div className="flex h-screen w-screen gap-2 p-2 overflow-hidden bg-background">
+        <Sidebar
           data={data}
-          dark={dark}
-          activeCoordinationCount={activeCoordinationCount}
-          pendingGatesCount={pendingGatesCount}
-          awayActive={awayRunning}
-          awayStatusText={awayStatusText}
-          onSearch={() => setMenu(true)}
-          onCoordination={() => setCoordinationOpen(true)}
-          onGates={() => setGatesOpen(true)}
-          onAway={() => setAwayOpen(true)}
-          onTheme={() => setDark((v) => !v)}
-          onSettings={() => setSettingsOpen(true)}
-          onOpenAgents={() => setAgentsOpen(true)}
-        />
-
-        <div className="flex min-h-0 flex-1 gap-2 p-2 overflow-hidden">
-          <Sidebar
-            data={data}
             view={route.view}
             dark={dark}
           pendingGatesCount={pendingGatesCount}
@@ -221,116 +220,58 @@ export function App() {
           onAway={() => setAwayOpen(true)}
           onSettings={() => setSettingsOpen(true)}
           onTheme={() => setDark((v) => !v)}
+          onOpenAgents={() => setAgentsOpen(true)}
           onChanged={refresh}
         />
 
         <main className="flex min-w-0 flex-1 overflow-clip rounded-xl border bg-background shadow-sm">
           <div className="flex min-w-0 flex-1 flex-col">
-            <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
-              <h1 className="font-semibold capitalize">{titleOf(route.view, me)}</h1>
-              {route.view.kind === "channel" ? (
-                <button onClick={() => setChannelPeople(true)} className="flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground" title="People in this channel">
-                  <Users className="size-3.5" />
-                  {data?.channels.find((c) => route.view.kind === "channel" && c.name === route.view.name)?.members.length ?? 0}
-                </button>
-              ) : null}
-              {error ? <span className="truncate text-[12px] text-destructive">{error}</span> : null}
-
-              <div className="ml-auto flex items-center gap-2">
-                <SearchBar onOpenTalk={(id) => go({ view: { kind: "all" }, talk: id })} />
-
-                {activeCoordinationCount > 0 ? (
-                  <button
-                    onClick={() => setCoordinationOpen(true)}
-                    className="flex items-center gap-1.5 rounded-md border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-xs font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-500/20"
-                    title="Review active agent coordination tasks"
-                  >
-                    <Cpu className="size-3.5 text-violet-500" />
-                    <span>{activeCoordinationCount} Task{activeCoordinationCount === 1 ? "" : "s"}</span>
+            {route.view.kind !== "work" ? (
+              <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
+                <h1 className="font-semibold capitalize text-sm">{titleOf(route.view, me)}</h1>
+                {route.view.kind === "channel" ? (
+                  <button onClick={() => setChannelPeople(true)} className="flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground" title="People in this channel">
+                    <Users className="size-3.5" />
+                    {data?.channels.find((c) => route.view.kind === "channel" && c.name === route.view.name)?.members.length ?? 0}
                   </button>
                 ) : null}
+                {error ? <span className="truncate text-[12px] text-destructive">{error}</span> : null}
 
-                {pendingGatesCount > 0 ? (
-                  <button
-                    onClick={() => setGatesOpen(true)}
-                    className="flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-600 dark:text-amber-400 hover:bg-amber-500/20"
-                    title="Review pending approval gates"
-                  >
-                    <Shield className="size-3.5 text-amber-500" />
-                    <span>{pendingGatesCount} Gate{pendingGatesCount === 1 ? "" : "s"}</span>
-                  </button>
-                ) : null}
+                <div className="ml-auto flex items-center gap-2">
+                  <div className={cn("flex rounded-md border p-0.5", route.view.kind !== "all" && "hidden")}>
+                    {(["list", "board"] as const).map((l) => (
+                      <button
+                        key={l}
+                        aria-label={l}
+                        onClick={() => {
+                          setLayout(l);
+                          persist("chamber:layout", l);
+                        }}
+                        className={cn("inline-flex h-6 w-7 items-center justify-center rounded text-muted-foreground", layout === l && "bg-accent text-foreground")}
+                      >
+                        {l === "list" ? <List className="size-3.5" /> : <LayoutGrid className="size-3.5" />}
+                      </button>
+                    ))}
+                  </div>
 
-                {/* Real Agent & User Presence Strip */}
-                {(() => {
-                  const isConnected = Boolean(data?.connected);
-                  const onlineAgents = data?.workspaces.filter((w) => w.online).length ?? 0;
-                  const runningCards = data?.cards.filter((c) => c.status === "talking").length ?? 0;
-
-                  let dotClass = "bg-emerald-500";
-                  let label = "Online";
-                  let title = `Connected to Chamber relay as @${data?.me || "user"}. Click to set Away Mode.`;
-
-                  if (!isConnected) {
-                    dotClass = "bg-amber-500 animate-pulse";
-                    label = "Connecting…";
-                    title = "Connecting to Chamber relay… Click to check status.";
-                  } else if (awayRunning) {
-                    dotClass = "bg-amber-500 animate-pulse";
-                    label = "Away";
-                    title = `Away mode active: ${awayStatusText || "Agents auto-handling tasks"}. Click to configure.`;
-                  } else if (onlineAgents > 0) {
-                    dotClass = "bg-emerald-500";
-                    label = `${onlineAgents} ${onlineAgents === 1 ? "agent" : "agents"} · ${
-                      runningCards > 0 ? `${runningCards} running` : "idle"
-                    }`;
-                    title = `${onlineAgents} coding agent(s) active on this machine. Click to set Away Mode.`;
-                  } else {
-                    dotClass = "bg-emerald-500";
-                    label = "Online";
-                    title = `Connected to Chamber relay as @${data?.me || "user"}. No background agents running. Click to set Away Mode.`;
-                  }
-
-                  return (
-                    <button
-                      onClick={() => setAwayOpen(true)}
-                      className={cn(
-                        "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
-                        awayRunning || !isConnected
-                          ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                          : "border-border/60 bg-muted/40 text-foreground hover:bg-accent"
-                      )}
-                      title={title}
-                    >
-                      <span className={cn("size-2 rounded-full", dotClass)} />
-                      <span>{label}</span>
-                    </button>
-                  );
-                })()}
-
-                <div className={cn("flex rounded-md border p-0.5", route.view.kind !== "all" && "hidden")}>
-                  {(["list", "board"] as const).map((l) => (
-                    <button
-                      key={l}
-                      aria-label={l}
-                      onClick={() => {
-                        setLayout(l);
-                        persist("chamber:layout", l);
-                      }}
-                      className={cn("inline-flex h-6 w-7 items-center justify-center rounded text-muted-foreground", layout === l && "bg-accent text-foreground")}
-                    >
-                      {l === "list" ? <List className="size-3.5" /> : <LayoutGrid className="size-3.5" />}
-                    </button>
-                  ))}
+                  <Button size="sm" onClick={() => openTalk("new")}>
+                    <Plus /> New talk
+                  </Button>
                 </div>
+              </header>
+            ) : null}
 
-                <Button size="sm" onClick={() => openTalk("new")}>
-                  <Plus /> New talk
-                </Button>
-              </div>
-            </header>
-
-            {route.view.kind === "memory" ? (
+            {route.view.kind === "work" ? (
+              <TeamWorkView
+                data={data}
+                me={me}
+                onOpenTalk={(id) => go({ view: { kind: "all" }, talk: id })}
+                onOpenGates={() => setGatesOpen(true)}
+                onChanged={refresh}
+                onNewTalk={() => openTalk("new")}
+                onAddWorkspace={() => setAgentsOpen(true)}
+              />
+            ) : route.view.kind === "memory" ? (
               <MemoryView onTalk={(id) => go({ view: { kind: "all" }, talk: id })} />
             ) : (
               <TalkList
@@ -373,7 +314,6 @@ export function App() {
           ) : null}
         </main>
       </div>
-    </div>
 
       <CommandMenu
         open={menu}
@@ -411,7 +351,7 @@ export function App() {
       <CoordinationDialog open={coordinationOpen} onOpenChange={setCoordinationOpen} me={me} />
       <AgentInspectorDialog open={agentsOpen} onOpenChange={setAgentsOpen} data={data} onChanged={refresh} />
       <AwayDialog open={awayOpen} onOpenChange={setAwayOpen} me={me} onChanged={refresh} />
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} data={data} me={me} onChanged={refresh} />
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} data={data} me={me} onChanged={refresh} dark={dark} onToggleTheme={setDark} />
     </TooltipProvider>
   );
 }

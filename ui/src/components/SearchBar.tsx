@@ -124,11 +124,11 @@ export function SearchBar({ onOpenTalk }: SearchBarProps) {
                   <div className="flex w-full items-center justify-between gap-2">
                     <span className="flex items-center gap-1.5 font-medium truncate">
                       {isIncident ? (
-                        <AlertTriangle className="size-3 text-amber-500" />
+                        <AlertTriangle className="size-3 text-[#c5b4e3]" />
                       ) : isPatch ? (
-                        <GitCommit className="size-3 text-emerald-500" />
+                        <GitCommit className="size-3 text-[#a8cbbb]" />
                       ) : (
-                        <Sparkles className="size-3 text-cyan-500" />
+                        <Sparkles className="size-3 text-[#8db8d5]" />
                       )}
                       {hit.title || hit.citation}
                     </span>

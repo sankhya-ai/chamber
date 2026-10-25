@@ -80,6 +80,7 @@ export interface BoardData {
 
 /** What the main area shows. */
 export type View =
+  | { kind: "work" }
   | { kind: "inbox" }
   | { kind: "all" }
   | { kind: "channel"; name: string }
@@ -148,6 +149,8 @@ export function people(data: BoardData | null): { owner: string; online: boolean
 /** The cards a view shows (`projects` resolves a project view to its agents). */
 export function inView(cards: Card[], view: View, projects: Project[] = []): Card[] {
   switch (view.kind) {
+    case "work":
+      return [];
     case "inbox":
       return cards; // everything, newest first; unread ones stand out
     case "all":
@@ -170,13 +173,14 @@ export function inView(cards: Card[], view: View, projects: Project[] = []): Car
 /** Where a new message typed in a view goes. */
 export function addressFor(view: View): string {
   if (view.kind === "channel") return view.name;
-  if (view.kind === "project" || view.kind === "memory") return "";
+  if (view.kind === "project" || view.kind === "memory" || view.kind === "work") return "";
   if (view.kind === "person") return `@${view.owner}`;
   if (view.kind === "agent") return view.agent;
   return "";
 }
 
 export function titleOf(view: View, me: string): string {
+  if (view.kind === "work") return "My team's work";
   if (view.kind === "inbox") return "Inbox";
   if (view.kind === "all") return "All talks";
   if (view.kind === "channel") return view.name;

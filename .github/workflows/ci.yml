@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }} - Node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node-version: [22, 24]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+
+      - name: Install root dependencies
+        run: npm ci || npm install
+
+      - name: Install relay dependencies
+        working-directory: ./relay
+        run: npm ci || npm install
+
+      - name: Run Security Audit Test Suite
+        run: node --test test/security_audit.test.mjs
+
+      - name: Run Coordination & Distributed ACP Test Suite
+        run: node --test test/coordination.test.mjs
+
+      - name: Run Integration & Relay Test Suite
+        run: node --test test/chamber.test.mjs
+
+  desktop-check:
+    name: Desktop Build Check (Rust/Tauri)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Check Desktop Tauri Crate
+        working-directory: ./desktop/src-tauri
+        run: cargo check
