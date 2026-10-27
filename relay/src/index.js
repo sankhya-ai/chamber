@@ -62,6 +62,22 @@ const MAX_MEMORY_FILE = 400_000; // sealed, base64
 const MAX_MEMORY_FILES = 2000;
 const MEMORY_PATH = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}\.md$/;
 
+/**
+ * How long a relay keeps what it holds. Cloudflare's free plan is the default: messages for
+ * RETENTION_MS (the newest MAX_ROWS), files only while someone is connected (see alarm). A relay on
+ * your own server (relay/serve.mjs) keeps everything unless told otherwise. Vars: RETENTION_DAYS
+ * (0 = forever), MAX_MESSAGES (0 = no cap), KEEP_FILES ("1" = never wipe files).
+ */
+function retention(env) {
+  const days = env.RETENTION_DAYS === undefined || env.RETENTION_DAYS === "" ? null : Number(env.RETENTION_DAYS);
+  const rows = env.MAX_MESSAGES === undefined || env.MAX_MESSAGES === "" ? null : Number(env.MAX_MESSAGES);
+  return {
+    keepMs: days === null || !Number.isFinite(days) ? RETENTION_MS : days > 0 ? days * 24 * 3600 * 1000 : 0,
+    maxRows: rows === null || !Number.isFinite(rows) ? MAX_ROWS : rows > 0 ? rows : 0,
+    keepFiles: String(env.KEEP_FILES || "") === "1",
+  };
+}
+
 async function lineOf(token) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
@@ -806,8 +822,9 @@ export class Line {
     else return this.send(ws, JSON.stringify({ t: "error", error: "to must be owner/name, @owner, #channel or *", id }));
 
     const now = Date.now();
-    this.sql.exec("DELETE FROM messages WHERE ts < ?", now - RETENTION_MS);
-    this.sql.exec("DELETE FROM messages WHERE seq <= (SELECT MAX(seq) FROM messages) - ?", MAX_ROWS);
+    const { keepMs, maxRows } = retention(this.env);
+    if (keepMs) this.sql.exec("DELETE FROM messages WHERE ts < ?", now - keepMs);
+    if (maxRows) this.sql.exec("DELETE FROM messages WHERE seq <= (SELECT MAX(seq) FROM messages) - ?", maxRows);
     const blobIds = (Array.isArray(frame.blobs) ? frame.blobs : []).map(String).filter((b) => BLOB.test(b)).slice(0, 20);
     const row = this.sql
       .exec(
@@ -1256,14 +1273,14 @@ export class Line {
   left(ws) {
     ws.serializeAttachment(null);
     this.broadcastRoster();
-    if (this.members().length === 0 && this.env.BLOBS) this.ctx.storage.setAlarm(Date.now() + (Number(this.env.IDLE_WIPE_SECONDS) * 1000 || IDLE_WIPE_MS));
+    if (this.members().length === 0 && this.env.BLOBS && !retention(this.env).keepFiles) this.ctx.storage.setAlarm(Date.now() + (Number(this.env.IDLE_WIPE_SECONDS) * 1000 || IDLE_WIPE_MS));
   }
 
   // ----- the end of a session: wipe its files ------------------------------------
 
   async alarm() {
     const line = this.line || (await this.ctx.storage.get("line"));
-    if (this.members().length > 0 || !this.env.BLOBS || !line) return;
+    if (this.members().length > 0 || !this.env.BLOBS || !line || retention(this.env).keepFiles) return;
     const keep = new Set();
     const cutoff = Date.now() - (Number(this.env.BLOB_RETENTION_HOURS || 24) * 3600 * 1000);
     for (const row of this.sql.exec("SELECT blobs FROM messages WHERE (delivered = 0 OR ts > ?) AND blobs != ''", cutoff).toArray()) {

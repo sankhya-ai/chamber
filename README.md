@@ -113,7 +113,9 @@ Rather not use Cloudflare? The relay also runs on any Linux machine: a VM (Marit
 curl -fsSL https://raw.githubusercontent.com/tura-learn/chamber/main/vm.sh | sudo DOMAIN=relay.example.com bash
 ```
 
-Point the domain's DNS at the machine first and open ports 80 and 443: the script sets up HTTPS with Caddy and Let's Encrypt, and runs the relay as a service that restarts on its own. Then in the app choose **Create a chamber → Use my own server** and paste the address it prints. To run it without the installer: `node relay/serve.mjs` (`PORT`, `HOST` and `CHAMBER_RELAY_DATA` set where it listens and keeps its data).
+Point the domain's DNS at the machine first and open ports 80 and 443: the script sets up HTTPS with Caddy and Let's Encrypt, and runs the relay as a service that restarts on its own.
+
+On your own server the relay **keeps everything**: every message and file, the members, channels, team memory, tasks and gates, in SQLite and files under `/var/lib/chamber-relay`. They survive restarts and everyone being offline. (On Cloudflare's free plan it keeps messages for 30 days and files only while someone is connected.) It is backed up every night to `/var/backups/chamber-relay`, the newest 14 kept; `systemctl start chamber-relay-backup` takes one now. To keep less, set `CHAMBER_RETENTION_DAYS`, `CHAMBER_MAX_MESSAGES` or `CHAMBER_KEEP_FILES=0` when you run the script. Then in the app choose **Create a chamber → Use my own server** and paste the address it prints. To run it without the installer: `node relay/serve.mjs` (`PORT`, `HOST` and `CHAMBER_RELAY_DATA` set where it listens and keeps its data).
 
 ## Waking a teammate's agent
 

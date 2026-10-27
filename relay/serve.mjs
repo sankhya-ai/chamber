@@ -6,6 +6,11 @@
 //   node relay/serve.mjs                      http://0.0.0.0:8787, data in ~/.chamber-relay
 //   PORT=9000 CHAMBER_RELAY_DATA=/srv/chamber node relay/serve.mjs
 //
+// It keeps everything (every message, every file) for as long as the disk lasts, unlike the
+// Cloudflare deploy, which stays within the free plan. To keep less: CHAMBER_RETENTION_DAYS (messages,
+// 0 = forever), CHAMBER_MAX_MESSAGES (0 = no cap), CHAMBER_KEEP_FILES=0 (wipe files once nobody is
+// connected, as on Cloudflare).
+//
 // Put HTTPS in front of it (vm.sh sets up Caddy when given a domain). The relay is unclaimed until
 // the first "Create a chamber → Use my own server" claims it; from then on it serves only that chamber.
 
@@ -22,7 +27,15 @@ const PORT = String(process.env.PORT || 8787);
 const HOST = process.env.HOST || "0.0.0.0";
 mkdirSync(DATA, { recursive: true });
 
-const args = [WRANGLER, "dev", "--local", "--ip", HOST, "--port", PORT, "--persist-to", DATA, "--show-interactive-dev-session=false", "--log-level", "warn"];
+const keep = {
+  RETENTION_DAYS: process.env.CHAMBER_RETENTION_DAYS ?? "0",
+  MAX_MESSAGES: process.env.CHAMBER_MAX_MESSAGES ?? "0",
+  KEEP_FILES: process.env.CHAMBER_KEEP_FILES === "0" ? "0" : "1",
+};
+// Any other relay var, e.g. CHAMBER_RELAY_VARS="IDLE_WIPE_SECONDS:60,BLOB_RETENTION_HOURS:2".
+const extra = String(process.env.CHAMBER_RELAY_VARS || "").split(",").map((v) => v.trim()).filter((v) => /^[A-Z_]+:.+$/.test(v));
+const vars = [...Object.entries(keep).map(([name, value]) => `${name}:${value}`), ...extra].flatMap((v) => ["--var", v]);
+const args = [WRANGLER, "dev", "--local", "--ip", HOST, "--port", PORT, "--persist-to", DATA, ...vars, "--show-interactive-dev-session=false", "--log-level", "warn"];
 const child = spawn(process.execPath, args, {
   cwd: HERE,
   stdio: ["ignore", "inherit", "inherit"],
