@@ -121,6 +121,8 @@ export const api = {
     post<{ ok: boolean; owner: string; relay: string; admin?: boolean }>("/api/board/onboarding/new", { relay, as, project }),
   cloudflareAuth: () =>
     request<{ authenticated: boolean; account: string | null }>("/api/board/onboarding/cloudflare-auth"),
+  cloudflareProgress: () => request<{ running: boolean; progress: string }>("/api/board/onboarding/cloudflare-progress"),
+  cloudflareCancel: () => post<{ ok: boolean }>("/api/board/onboarding/cloudflare-cancel"),
   cloudflareSetup: (as?: string, project?: string) =>
     post<{ ok: boolean; relay: string; owner: string; inviteCommand: string }>("/api/board/onboarding/cloudflare-setup", { as, project }),
   detectHarnesses: () =>

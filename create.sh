@@ -62,7 +62,8 @@ say "4/5  Deploying your relay"
 # New Cloudflare accounts need a workers.dev subdomain before the first deploy.
 # Wrangler prompts interactively when there's a TTY, but in piped/CI contexts it fails.
 # Auto-register one via the Cloudflare API so users never have to visit the dashboard.
-ACCT_ID="$(wr whoami 2>&1 | grep -Eo '[a-f0-9]{32}' | head -1)"
+# whoami also refreshes an expired sign-in token, so the token read below is current.
+ACCT_ID="$(wr whoami --json 2>/dev/null | grep -Eo '"id": *"[a-f0-9]{32}"' | head -1 | grep -Eo '[a-f0-9]{32}')"
 if [ -n "$ACCT_ID" ]; then
   # Read the OAuth token wrangler stored during login
   CF_TOKEN=""
@@ -81,12 +82,16 @@ if [ -n "$ACCT_ID" ]; then
       "https://api.cloudflare.com/client/v4/accounts/$ACCT_ID/workers/subdomain" 2>/dev/null \
       | grep -o '"subdomain":"[^"]*"' | head -1 || true)"
     if [ -z "$HAS_SUB" ]; then
-      SUB_NAME="$(whoami | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')-$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' ')"
-      echo "Registering $SUB_NAME.workers.dev for your account…"
-      curl -fsS -X PUT \
-        -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" \
-        -d "{\"subdomain\":\"$SUB_NAME\"}" \
-        "https://api.cloudflare.com/client/v4/accounts/$ACCT_ID/workers/subdomain" >/dev/null 2>&1 || true
+      # Lowercase letters, digits and inner hyphens, at most 63 characters; a random one if the first is taken.
+      HEX="$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+      BASE="$(whoami | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | sed 's/^-*//' | cut -c1-40 | sed 's/-*$//')"
+      for SUB_NAME in "${BASE:-chamber}-${HEX:0:4}" "chamber-$HEX"; do
+        echo "Registering $SUB_NAME.workers.dev for your account…"
+        curl -fsS -X PUT \
+          -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" \
+          -d "{\"subdomain\":\"$SUB_NAME\"}" \
+          "https://api.cloudflare.com/client/v4/accounts/$ACCT_ID/workers/subdomain" >/dev/null 2>&1 && break
+      done
     fi
   fi
 fi

@@ -12,6 +12,7 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [project, setProject] = useState("");
+  const [progress, setProgress] = useState("");
 
   // The folder the app was started in becomes your first workspace; more are added in the app.
   useEffect(() => {
@@ -39,13 +40,29 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
     void run(() => api.joinOnboarding(invite.trim(), handle.trim() || undefined, project || undefined), "That invite code didn't work. Ask your admin for a new one.");
   };
 
+  // While a chamber is being created, show the step the server is on (sign-in, deploy, keys…).
+  useEffect(() => {
+    if (!loading || step !== "create") return setProgress("");
+    const poll = setInterval(() => api.cloudflareProgress().then((res) => setProgress(res.progress), () => undefined), 1000);
+    return () => clearInterval(poll);
+  }, [loading, step]);
+
   const create = (e: React.FormEvent) => {
     e.preventDefault();
     void run(() => api.cloudflareSetup(handle.trim() || undefined, project || undefined), "Couldn't create the chamber. Check your Cloudflare sign-in and try again.");
   };
 
+  // Going back from a chamber being created cancels it on the server too, so it never finishes behind your back.
+  const goBack = () => {
+    if (loading && step === "create") void api.cloudflareCancel().catch(() => undefined);
+    attempt.current++;
+    setLoading(false);
+    setStep("choose");
+    setError("");
+  };
+
   const back = (
-    <button type="button" onClick={() => { attempt.current++; setLoading(false); setStep("choose"); setError(""); }} className="mb-4 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+    <button type="button" onClick={goBack} className="mb-4 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
       <ArrowLeft className="size-3.5" /> Back
     </button>
   );
@@ -103,7 +120,7 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
               Chamber sets up a private, end-to-end encrypted relay in your own free Cloudflare account. A browser window opens once to sign in to Cloudflare: finish signing in there, then come back here.
             </p>
             <Button type="submit" disabled={loading} className="h-10 w-full gap-2 text-sm">
-              {loading ? <><Loader2 className="size-4 animate-spin" /> Waiting for Cloudflare sign-in…</> : <>Create chamber <ArrowRight className="size-4" /></>}
+              {loading ? <><Loader2 className="size-4 animate-spin" /> {progress.replace(/^\d\/\d\s*/, "") || "Creating your chamber…"}</> : <>Create chamber <ArrowRight className="size-4" /></>}
             </Button>
           </form>
         ) : null}
