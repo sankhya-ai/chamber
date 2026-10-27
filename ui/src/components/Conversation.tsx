@@ -11,11 +11,12 @@ import { address, ago, defaultRecipient, personOf, who, type Talk } from "@/lib/
 import { cn } from "@/lib/utils";
 
 /** One talk, Slack-style: messages grouped by sender, a composer, Done. `talkId` null = a new talk. */
-export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStarted, onChanged }: {
+export function Conversation({ talkId, me, to: fixedTo, people, channels = [], onClose, onStarted, onChanged }: {
   talkId: string | null;
   me: string;
   to: string; // where a new talk goes ("" = ask)
   people: string[];
+  channels?: { name: string; members: string[] }[];
   onClose: () => void;
   onStarted: (thread: string) => void;
   onChanged: () => void;
@@ -355,6 +356,11 @@ export function Conversation({ talkId, me, to: fixedTo, people, onClose, onStart
         placeholder={talkId ? `Reply${talk?.channel ? ` in ${talk.channel}` : talk ? ` to ${who(defaultRecipient(talk, me), me)}` : ""}…` : "What do you want to talk about?"}
         people={people.filter((p) => !p.includes("/") && !p.startsWith("#")).map((p) => p.replace(/^@/, ""))}
         onSend={send}
+        channel={(() => {
+          const name = talk?.channel || (to.startsWith("#") ? to : "");
+          const found = channels.find((c) => c.name === name);
+          return found ? { name, members: found.members, add: async (owner: string) => { await api.channel("add", name, owner); onChanged(); } } : undefined;
+        })()}
       />
     </section>
   );

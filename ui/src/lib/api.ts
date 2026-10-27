@@ -2,6 +2,20 @@
 
 import type { BoardData, Talk } from "./board.ts";
 
+/** A team's place on Chamber Cloud: its trial or plan, and (for the admin) the signed billing link. */
+export interface CloudPlan {
+  registered: boolean;
+  trial: boolean;
+  trialEnds: number;
+  status: "trial" | "active" | "cancelled" | "enterprise";
+  seats: number;
+  members: number;
+  access: boolean;
+  reason: string;
+  admin: boolean;
+  billing: string | null;
+}
+
 export interface AgentTool {
   id: "claude" | "codex";
   label: string;
@@ -148,6 +162,8 @@ export const api = {
     post<{ ok: boolean; owner: string; relay: string; admin?: boolean }>("/api/board/onboarding/new", { relay, as, project }),
   cloudflareAuth: () =>
     request<{ authenticated: boolean; account: string | null }>("/api/board/onboarding/cloudflare-auth"),
+  plan: () => request<{ plan: CloudPlan | null }>("/api/board/plan"),
+  openExternal: (url: string) => post<{ ok: boolean }>("/api/board/open", { url }),
   agentTools: () => request<{ tools: AgentTool[] }>("/api/board/agent-tools"),
   startAgentTool: (tool: string, action: "install" | "login") => post<{ tools: AgentTool[] }>("/api/board/agent-tools", { tool, action }),
   wakeRules: () => request<{ agents: Record<string, WakeRule>; log: WakeEntry[] }>("/api/board/wake"),

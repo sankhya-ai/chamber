@@ -5,6 +5,7 @@ import { Avatar } from "@/components/Avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/lib/api";
 import { inView, KIND, people, type BoardData, type View } from "@/lib/board";
+import { PlanNote } from "@/components/PlanNote";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -345,6 +346,7 @@ export function Sidebar({
         </button>
         </div>
 
+        <PlanNote />
         <div className="flex items-center justify-between px-1">
         {data?.admin ? <IconButton label="Invite a teammate" onClick={onInvite}><UserPlus className="size-4" /></IconButton> : null}
         <IconButton label="Members" onClick={onMembers}><Users className="size-4" /></IconButton>

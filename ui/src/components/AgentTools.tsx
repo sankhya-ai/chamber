@@ -60,9 +60,9 @@ export function AgentTools() {
                 )}
               </div>
               {job?.running && job.action === "login" && job.link ? (
-                <a href={job.link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline">
+                <button type="button" onClick={() => void api.openExternal(job.link!)} className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline">
                   <ExternalLink className="size-3" /> Browser didn't open? Open the sign-in page
-                </a>
+                </button>
               ) : null}
               {job && !job.running && job.ok === false ? (
                 <p className="whitespace-pre-wrap break-words font-mono text-[10px] text-destructive">{job.output.trim().split("\n").slice(-3).join("\n") || "It stopped with an error."}</p>

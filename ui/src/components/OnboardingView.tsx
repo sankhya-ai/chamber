@@ -3,6 +3,13 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
+// Every option is end-to-end encrypted: the relay, wherever it runs, stores only ciphertext.
+const HOSTS = [
+  { id: "cloud", title: "Chamber Cloud", copy: "We run it for you. Free for 7 days, then US$5 (₹449) per teammate a month. Nothing to set up." },
+  { id: "cloudflare", title: "Your Cloudflare account", copy: "Free. Chamber sets up a relay in your Cloudflare account; you sign in to Cloudflare once in your browser." },
+  { id: "server", title: "Your own server", copy: "Free. Run the relay on a VM or any Linux server, and keep every message and file there." },
+] as const;
+
 const input = "w-full rounded-lg border bg-background p-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring";
 
 export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
@@ -13,8 +20,8 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
   const [error, setError] = useState("");
   const [project, setProject] = useState("");
   const [progress, setProgress] = useState("");
-  // Create on your own server (a VM running vm.sh) instead of your Cloudflare account.
-  const [ownServer, setOwnServer] = useState(false);
+  // Where the chamber's relay runs: Chamber Cloud (hosted, a 7-day trial), your Cloudflare, or your server.
+  const [host, setHost] = useState<"cloud" | "cloudflare" | "server">("cloud");
   const [relay, setRelay] = useState("");
 
   // The folder the app was started in becomes your first workspace; more are added in the app.
@@ -45,14 +52,18 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
 
   // While a chamber is being created, show the step the server is on (sign-in, deploy, keys…).
   useEffect(() => {
-    if (!loading || step !== "create") return setProgress("");
+    if (!loading || step !== "create" || host !== "cloudflare") return setProgress("");
     const poll = setInterval(() => api.cloudflareProgress().then((res) => setProgress(res.progress), () => undefined), 1000);
     return () => clearInterval(poll);
   }, [loading, step]);
 
   const create = (e: React.FormEvent) => {
     e.preventDefault();
-    if (ownServer) {
+    if (host === "cloud") {
+      void run(() => api.newOnboarding("cloud", handle.trim() || undefined, project || undefined), "Couldn't reach Chamber Cloud. Check your connection and try again.");
+      return;
+    }
+    if (host === "server") {
       void run(() => api.newOnboarding(relay.trim(), handle.trim() || undefined, project || undefined), "Couldn't reach that relay. Check the address and that the server is running.");
       return;
     }
@@ -61,7 +72,7 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
 
   // Going back from a chamber being created cancels it on the server too, so it never finishes behind your back.
   const goBack = () => {
-    if (loading && step === "create") void api.cloudflareCancel().catch(() => undefined);
+    if (loading && step === "create" && host === "cloudflare") void api.cloudflareCancel().catch(() => undefined);
     attempt.current++;
     setLoading(false);
     setStep("choose");
@@ -123,24 +134,29 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
               <label className="mb-1.5 block text-xs font-medium">Your name</label>
               <input value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="Optional. Defaults to your git name" className={input} />
             </div>
-            {ownServer ? (
+            <fieldset className="space-y-2" disabled={loading}>
+              <legend className="mb-1.5 block text-xs font-medium">Where it runs</legend>
+              {HOSTS.map((h) => (
+                <label key={h.id} className={`flex cursor-pointer gap-2.5 rounded-lg border p-3 text-left transition ${host === h.id ? "border-primary bg-primary/5" : "hover:bg-muted/40"}`}>
+                  <input type="radio" name="host" className="mt-0.5" checked={host === h.id} onChange={() => { setHost(h.id); setError(""); }} />
+                  <span>
+                    <span className="block text-sm font-medium">{h.title}</span>
+                    <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{h.copy}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+            {host === "server" ? (
               <div>
                 <label className="mb-1.5 block text-xs font-medium">Your relay's address</label>
                 <input required autoFocus value={relay} onChange={(e) => setRelay(e.target.value)} placeholder="https://relay.example.com" className={`${input} font-mono text-xs`} />
                 <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                  Run <code className="font-mono">vm.sh</code> on a Linux server or VM (Maritime, any cloud) and paste the address it prints. Messages stay end-to-end encrypted: the server only stores ciphertext.
+                  Run <code className="font-mono">vm.sh</code> on a Linux server or VM, or the Docker image, and paste the address it prints.
                 </p>
               </div>
-            ) : (
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                Chamber sets up a private, end-to-end encrypted relay in your own free Cloudflare account. A browser window opens once to sign in to Cloudflare: finish signing in there, then come back here.
-              </p>
-            )}
-            <button type="button" disabled={loading} onClick={() => { setOwnServer(!ownServer); setError(""); }} className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
-              {ownServer ? "Use my Cloudflare account instead" : "Use my own server instead"}
-            </button>
-            <Button type="submit" disabled={loading || (ownServer && !relay.trim())} className="h-10 w-full gap-2 text-sm">
-              {loading ? <><Loader2 className="size-4 animate-spin" /> {(!ownServer && progress.replace(/^\d\/\d\s*/, "")) || "Creating your chamber…"}</> : <>Create chamber <ArrowRight className="size-4" /></>}
+            ) : null}
+            <Button type="submit" disabled={loading || (host === "server" && !relay.trim())} className="h-10 w-full gap-2 text-sm">
+              {loading ? <><Loader2 className="size-4 animate-spin" /> {(host === "cloudflare" && progress.replace(/^\d\/\d\s*/, "")) || "Creating your chamber…"}</> : <>Create chamber <ArrowRight className="size-4" /></>}
             </Button>
           </form>
         ) : null}

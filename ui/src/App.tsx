@@ -57,6 +57,8 @@ export function App() {
   const [error, setError] = useState("");
   const [route, setRoute] = useState<Route>(() => parse(location.hash));
   const [layout, setLayout] = useState<"list" | "board">(() => stored("chamber:layout", "list") as "list" | "board");
+  // Inbox and All talks: everything, talks with teammates, or only you and your own agents.
+  const [scope, setScope] = useState<"all" | "team" | "mine">(() => stored("chamber:scope", "all") as "all" | "team" | "mine");
   const [dark, setDark] = useState(() => stored("chamber:theme", matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") === "dark");
   const [menu, setMenu] = useState(false);
   const [channels, setChannels] = useState(false);
@@ -200,7 +202,12 @@ export function App() {
   });
 
   const me = data?.me ?? "";
-  const cards = useMemo(() => inView(data?.cards ?? [], route.view, data?.projects ?? []), [data, route.view]);
+  const cards = useMemo(() => {
+    const all = inView(data?.cards ?? [], route.view, data?.projects ?? []);
+    if (scope === "all" || (route.view.kind !== "inbox" && route.view.kind !== "all")) return all;
+    const mine = (c: (typeof all)[number]) => !c.channel && c.with.length === 0;
+    return all.filter((c) => (scope === "mine" ? mine(c) : !mine(c)));
+  }, [data, route.view, scope]);
   const known = useMemo(() => {
     const names = people(data).map((p) => p.owner);
     const chans = (data?.channels ?? []).filter((c) => c.joined).map((c) => c.name);
@@ -252,6 +259,21 @@ export function App() {
                 {error ? <span className="truncate text-[12px] text-destructive">{error}</span> : null}
 
                 <div className="ml-auto flex items-center gap-2">
+                  <div className={cn("flex rounded-md border p-0.5 text-[12px]", route.view.kind !== "all" && route.view.kind !== "inbox" && "hidden")} role="group" aria-label="Whose talks">
+                    {(["all", "team", "mine"] as const).map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => {
+                          setScope(s);
+                          persist("chamber:scope", s);
+                        }}
+                        title={s === "mine" ? "Only you and your own agents" : s === "team" ? "Talks with teammates and channels" : "Everything"}
+                        className={cn("h-6 rounded px-2 text-muted-foreground", scope === s && "bg-accent text-foreground")}
+                      >
+                        {s === "all" ? "All" : s === "team" ? "Team" : "Mine"}
+                      </button>
+                    ))}
+                  </div>
                   <div className={cn("flex rounded-md border p-0.5", route.view.kind !== "all" && "hidden")}>
                     {(["list", "board"] as const).map((l) => (
                       <button
@@ -304,6 +326,10 @@ export function App() {
                 <Composer
                   placeholder={`Message ${route.view.kind === "channel" ? here : titleOf(route.view, me)}… (starts a new talk)`}
                   people={people(data).map((p) => p.owner)}
+                  channel={(() => {
+                    const found = route.view.kind === "channel" ? data?.channels.find((c) => c.name === here) : undefined;
+                    return found ? { name: found.name, members: found.members, add: async (owner: string) => { await api.channel("add", found.name, owner); refresh(); } } : undefined;
+                  })()}
                   onSend={async (text) => {
                     const started = await api.startTalk(here, text, text.split("\n")[0].slice(0, 80));
                     refresh();
@@ -321,6 +347,7 @@ export function App() {
               me={me}
               to={here}
               people={known}
+              channels={data?.channels ?? []}
               onClose={() => openTalk(null)}
               onStarted={(thread) => openTalk(thread)}
               onChanged={refresh}

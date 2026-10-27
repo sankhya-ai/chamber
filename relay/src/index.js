@@ -520,7 +520,8 @@ export class Line {
     const reason = access ? "" : plan.status === "trial"
       ? `this chamber's 7-day trial has ended: your admin can subscribe (US$5 per teammate a month) at ${BILLING_URL}`
       : `this chamber's plan isn't active: your admin can renew it at ${BILLING_URL}`;
-    return { registered: true, createdAt: plan.createdAt, trialEnds: plan.trialEnds, trial, status: plan.status, seats: plan.seats, paidUntil: plan.paidUntil, members, access, reason, billing: BILLING_URL };
+    // adminKey (public): the billing site checks that a billing link was signed by this chamber's admin.
+    return { registered: true, adminKey: plan.adminKey, account: plan.account || "", createdAt: plan.createdAt, trialEnds: plan.trialEnds, trial, status: plan.status, seats: plan.seats, paidUntil: plan.paidUntil, members, access, reason, billing: BILLING_URL };
   }
 
   /** The admin key in force for this chamber (from the Worker; kept for hibernated wake-ups). */

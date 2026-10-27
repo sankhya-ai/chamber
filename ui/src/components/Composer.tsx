@@ -33,11 +33,14 @@ export function Composer({
   people,
   onSend,
   disabled,
+  channel,
 }: {
   placeholder: string;
   people: string[];
   onSend: (text: string, files?: AttachedFile[]) => Promise<void>;
   disabled?: boolean;
+  /** In a channel: who is in it, and how to add someone, so a mention of an outsider isn't lost. */
+  channel?: { name: string; members: string[]; add: (owner: string) => Promise<void> };
 }) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<StagedAttachment[]>([]);
@@ -45,6 +48,9 @@ export function Composer({
   const [error, setError] = useState("");
   const [pick, setPick] = useState(0);
   const [dragging, setDragging] = useState(false);
+  // People @mentioned who aren't in this channel: they'd never see it. Asked before sending.
+  const [outsiders, setOutsiders] = useState<string[]>([]);
+  useEffect(() => setOutsiders([]), [text]);
   const area = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -129,12 +135,19 @@ export function Composer({
     }
   };
 
-  const send = async () => {
+  const send = async (add: boolean | null = null) => {
     const body = text.trim();
     if ((!body && !attachments.length) || busy || disabled) return;
+    if (channel && add === null) {
+      const mentioned = [...body.matchAll(/(?:^|\s)@([a-z0-9._-]+)/gi)].map((m) => m[1].toLowerCase());
+      const missing = [...new Set(mentioned)].filter((n) => people.includes(n) && !channel.members.includes(n));
+      if (missing.length) return setOutsiders(missing);
+    }
+    setOutsiders([]);
     setBusy(true);
     setError("");
     try {
+      if (add && channel) for (const name of outsiders) await channel.add(name);
       const outgoingFiles = attachments.map(({ name, data, size }) => ({ name, data, size }));
       await onSend(body || (outgoingFiles[0] ? `Attached: ${outgoingFiles.map((f) => f.name).join(", ")}` : ""), outgoingFiles);
       setText("");
@@ -267,6 +280,15 @@ export function Composer({
           </button>
         </div>
       </div>
+      {outsiders.length && channel ? (
+        <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-2.5 py-1.5 text-[12px]">
+          <span>
+            {outsiders.map((n) => `@${n}`).join(", ")} {outsiders.length === 1 ? "isn't" : "aren't"} in {channel.name}, so {outsiders.length === 1 ? "they" : "they"} won't see this.
+          </span>
+          <button type="button" onClick={() => void send(true)} className="rounded bg-primary px-2 py-0.5 font-medium text-primary-foreground">Add and send</button>
+          <button type="button" onClick={() => void send(false)} className="text-muted-foreground hover:text-foreground">Send anyway</button>
+        </div>
+      ) : null}
       {error ? <p className="mt-1 text-[12px] text-destructive">{error}</p> : null}
     </div>
   );
