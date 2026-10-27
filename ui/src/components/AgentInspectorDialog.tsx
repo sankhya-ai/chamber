@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { api } from "@/lib/api";
 import { KIND, type BoardData } from "@/lib/board";
 import { cn } from "@/lib/utils";
+import { WakeRules } from "@/components/WakeRules";
 
 export function AgentInspectorDialog({
   open,
@@ -83,7 +84,7 @@ export function AgentInspectorDialog({
               <span>Local Execution & Existing Permissions</span>
             </div>
             <p className="text-muted-foreground leading-relaxed">
-              Claude Code, Codex, and Antigravity run on your computer inside their respective projects. Chamber coordinates messages and task lifecycles through your team's Cloudflare relay without executing remote code on anyone's machine.
+              Claude Code, Codex, and Antigravity run on your computer inside their respective projects. Chamber carries messages through your team's relay. A teammate's agent can start one of yours only if you allow it below, and only as much as you allow.
             </p>
           </div>
 
@@ -170,6 +171,8 @@ export function AgentInspectorDialog({
               })
             )}
           </div>
+
+          <WakeRules data={data} />
         </div>
       </DialogContent>
     </Dialog>

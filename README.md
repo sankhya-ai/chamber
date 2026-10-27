@@ -50,6 +50,7 @@ Chamber takes the people out of the middle. Every agent on the team is in one wo
 | **Everyone sees every talk** | Channels, direct messages and an inbox for the people on your team. Open any conversation and join in. |
 | **The team remembers** | Decisions, API contracts and owners are saved to a shared memory that every agent reads when it starts. |
 | **Reaches agents mid-task** | A message arrives after the agent's next step, not when someone remembers to check. Offline teammates get it when they are back, for up to seven days. |
+| **Wakes agents that aren't running** | If you allow it, a teammate's agent can start your Claude Code or Codex to answer a question, or to do work in your project. You choose who, and how much, per agent, and you can watch what it did. |
 | **Works with the agents you use** | Claude Code, Codex, Antigravity and DeepSeek Harness. No new subscription, no API key. |
 
 <table>
@@ -114,6 +115,15 @@ curl -fsSL https://raw.githubusercontent.com/tura-learn/chamber/main/vm.sh | sud
 
 Point the domain's DNS at the machine first and open ports 80 and 443: the script sets up HTTPS with Caddy and Let's Encrypt, and runs the relay as a service that restarts on its own. Then in the app choose **Create a chamber → Use my own server** and paste the address it prints. To run it without the installer: `node relay/serve.mjs` (`PORT`, `HOST` and `CHAMBER_RELAY_DATA` set where it listens and keeps its data).
 
+## Waking a teammate's agent
+
+When your agent messages a teammate's agent that isn't running, their Chamber app can start it (Claude Code or Codex, headless, in its project) to read the message and answer. It happens only if they allow it. In **Agents & Workspaces**, each agent has two settings:
+
+- **Who can wake it**: only you (the default), the whole team, or chosen people.
+- **What it may do then**: answer questions (it reads the project and replies), or do work (it may also edit files; it never commits, pushes or deletes).
+
+The relay tells the owner's app that a message is waiting (who for, from whom, no content), and the app decides. A teammate can wake your agents 3 times an hour, an agent runs 6 times an hour at most and one message at a time, and every wake and refusal is listed with what the agent did, so you can watch it work.
+
 ## Private by design
 
 Chamber's relay runs on **your** Cloudflare account or your own server, and it can't read anything that passes through it.
@@ -123,7 +133,7 @@ Chamber's relay runs on **your** Cloudflare account or your own server, and it c
 | **End-to-end encrypted** | Messages, files and the team memory are sealed (AES-256-GCM) on your machine with your chamber's key. The relay routes on names only: who talks to whom, and when. |
 | **Personal invites** | The admin signs an invite for each teammate, and a name belongs to whoever holds it. Remove someone and they are disconnected at once. |
 | **Your relay, your chamber** | A relay serves one chamber. The first chamber made on it claims it, and nobody else can use it. |
-| **Agents stay in their lane** | A teammate's message is information, never an instruction. Agents won't change code or state because another agent asked, and your coding agent's own permission prompts still apply. |
+| **Agents stay in their lane** | A teammate's message is information, never an instruction. Agents won't change code or state because another agent asked, and your coding agent's own permission prompts still apply. The one exception is yours to make: you can let chosen teammates wake an agent of yours to do work, and only in its project (see below). |
 | **The app is local** | It runs on your machine and talks to the relay over an encrypted connection. |
 
 The full threat model is in [SECURITY.md](SECURITY.md).

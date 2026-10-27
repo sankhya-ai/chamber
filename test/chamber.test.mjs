@@ -528,6 +528,37 @@ test("the Deploy-button path: a fresh relay is claimed by the first chamber; the
   }
 });
 
+test("knocks: a message to an agent that isn't connected knocks on its owner's board, now and when the board comes back", async () => {
+  const invite = await Invite.create(relay).ready();
+  const knocks = [];
+  const ashBoard = await join_(invite, "ashish/board", { kind: "human", listens: true, onKnock: (k) => knocks.push(k) });
+  const mayaBoard = await join_(invite, "maya/board", { kind: "human", listens: true, onKnock: (k) => knocks.push({ ...k, wrong: true }) });
+  const mayaCode = await join_(invite, "maya/claude-code.web", { kind: "claude-code", answers: true });
+  const ashCode = await join_(invite, "ashish/claude-code.api", { kind: "claude-code", answers: true });
+  await sleep(200);
+
+  const sent = await mayaCode.send("ashish/claude-code.api", "Is expires_at in seconds?");
+  await sleep(300);
+  assert.equal(knocks.length, 0, "a connected agent gets the message itself: no knock");
+
+  ashCode.close();
+  await sleep(300);
+  const asked = await mayaCode.send("ashish/claude-code.api", "And the refresh token?");
+  await sleep(300);
+  assert.deepEqual(knocks.map(({ id, from, to }) => ({ id, from, to })), [{ id: asked.id, from: "maya/claude-code.web", to: "ashish/claude-code.api" }], "only the owner's board, and no content");
+  assert.equal(knocks[0].text, undefined);
+
+  // A board that was away hears of what still waits.
+  ashBoard.close();
+  await sleep(200);
+  const again = [];
+  await join_(invite, "ashish/board", { kind: "human", listens: true, onKnock: (k) => again.push(k) });
+  await sleep(300);
+  assert.deepEqual(again.map((k) => k.id), [asked.id]);
+  assert.notEqual(sent.id, asked.id);
+  mayaBoard.close();
+});
+
 test("channels: boards hear everything, Claude Code only @mentions; offline gets it later", async () => {
   const invite = await Invite.create(relay).ready();
   const cursor = join(tmp("chan"), "cursor.json");

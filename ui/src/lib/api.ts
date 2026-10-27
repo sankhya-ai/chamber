@@ -2,6 +2,24 @@
 
 import type { BoardData, Talk } from "./board.ts";
 
+export interface WakeRule {
+  who: "nobody" | "team" | string[];
+  can: "answer" | "work";
+}
+
+export interface WakeEntry {
+  id: string;
+  at: number;
+  agent: string;
+  from: string;
+  message: string | null;
+  result: "woke" | "refused";
+  reason?: string;
+  can?: "answer" | "work";
+  ended?: number;
+  code?: number | null;
+}
+
 export interface Dream {
   ts: number;
   ms: number;
@@ -121,6 +139,9 @@ export const api = {
     post<{ ok: boolean; owner: string; relay: string; admin?: boolean }>("/api/board/onboarding/new", { relay, as, project }),
   cloudflareAuth: () =>
     request<{ authenticated: boolean; account: string | null }>("/api/board/onboarding/cloudflare-auth"),
+  wakeRules: () => request<{ agents: Record<string, WakeRule>; log: WakeEntry[] }>("/api/board/wake"),
+  setWakeRule: (agent: string, rule: WakeRule) => post<{ agents: Record<string, WakeRule>; log: WakeEntry[] }>("/api/board/wake", { agent, ...rule }),
+  wakeRun: (id: string) => request<{ events: any[] }>(`/api/board/wake/${id}`),
   cloudflareProgress: () => request<{ running: boolean; progress: string }>("/api/board/onboarding/cloudflare-progress"),
   cloudflareCancel: () => post<{ ok: boolean }>("/api/board/onboarding/cloudflare-cancel"),
   cloudflareSetup: (as?: string, project?: string) =>

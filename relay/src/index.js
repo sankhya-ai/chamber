@@ -37,11 +37,15 @@
 //   "@owner"      a person: their best agent online (one that answers, then the
 //                 highest priority), else held until one of theirs connects
 //   "*"           everyone on the line
+//
+// Knocks: a message to an agent that isn't connected also sends its owner's boards a knock
+// ({t: "knock", id, from, to, ts}, no content), so the owner's app can wake that agent if the
+// owner allows the sender to.
 
 import { install } from "./install.js";
 
 /** Bumped when the relay changes, so a client can tell which code answered. */
-const RELAY_VERSION = 5;
+const RELAY_VERSION = 6;
 const RETENTION_MS = 30 * 24 * 3600 * 1000;
 const MAX_ROWS = 50000;
 const MAX_BODY = 900_000;
@@ -53,6 +57,7 @@ const BLOB = /^[0-9a-f]{32}$/;
 const MSG_ID = /^[0-9a-f]{32}$/;
 const MAX_BLOB = 25 * 1024 * 1024;
 const IDLE_WIPE_MS = 10 * 60 * 1000;
+const KNOCK_WINDOW_MS = 24 * 3600 * 1000; // a board that connects hears of waiting messages this recent
 const MAX_MEMORY_FILE = 400_000; // sealed, base64
 const MAX_MEMORY_FILES = 2000;
 const MEMORY_PATH = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}\.md$/;
@@ -764,6 +769,15 @@ export class Line {
     }
     missed.sort((a, b) => a.seq - b.seq);
     for (const row of missed) this.send(ws, JSON.stringify(this.envelope(row)));
+    // A board that was away: knocks for what still waits for its owner's agents that aren't connected.
+    if (who.listens) {
+      const online = new Set(this.roster().map((w) => w.agent));
+      const waiting = this.sql
+        .exec("SELECT id, from_agent, to_agent, ts FROM messages WHERE delivered = 0 AND to_agent LIKE ? AND ts > ? ORDER BY seq DESC LIMIT 50", `${who.owner}/%`, Date.now() - KNOCK_WINDOW_MS)
+        .toArray()
+        .filter((row) => AGENT.test(row.to_agent) && !online.has(row.to_agent));
+      for (const row of waiting.reverse()) this.send(ws, JSON.stringify({ t: "knock", id: row.id, from: row.from_agent, to: row.to_agent, ts: row.ts }));
+    }
     if (missed.length) this.sql.exec(`UPDATE messages SET delivered = 1 WHERE seq IN (${missed.map((r) => Number(r.seq)).join(",")})`);
     this.ctx.storage.deleteAlarm();
     this.broadcastRoster();
@@ -819,9 +833,20 @@ export class Line {
         delivered.push(them.agent);
       }
     }
+    // An agent that is not connected can't read this: knock on its owner's board, which may wake it.
+    if (toAgent && AGENT.test(toAgent) && !delivered.includes(toAgent)) this.knock(toAgent, [row], ws);
     const waiting = Boolean(toOwner && !toAgent); // only a board copy so far: the person's agents haven't got it
     if (delivered.length && !waiting) this.sql.exec("UPDATE messages SET delivered = 1 WHERE seq = ?", row.seq);
     this.send(ws, JSON.stringify({ t: "sent", id, seq: row.seq, to: toAgent, delivered, held: waiting || delivered.length === 0 }));
+  }
+
+  /** Tell `agent`'s owner's boards (seats that listen) that messages wait for it. No content: only who and when. */
+  knock(agent, rows, except = null) {
+    const owner = agent.split("/")[0];
+    for (const { ws, who } of this.members()) {
+      if (ws === except || who.owner !== owner || !who.listens) continue;
+      for (const row of rows) this.send(ws, JSON.stringify({ t: "knock", id: row.id, from: row.from_agent, to: agent, ts: row.ts }));
+    }
   }
 
   envelope(row) {

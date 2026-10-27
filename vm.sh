@@ -41,6 +41,8 @@ id chamber >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/s
 mkdir -p "$DATA" && chown chamber: "$DATA"
 TMP="$(mktemp -d)"
 curl -fsSL "$REPO" | tar -xz -C "$TMP"
+# Stop the relay while its source is replaced: it watches its files and would rebuild half-copied ones.
+systemctl stop chamber-relay 2>/dev/null || true
 rm -rf "$SRC" && mv "$TMP"/* "$SRC" && rm -rf "$TMP"
 (cd "$SRC/relay" && npm ci --silent --no-audit --no-fund)
 chown -R chamber: "$SRC" # wrangler keeps its working files in relay/.wrangler
