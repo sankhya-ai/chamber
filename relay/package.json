@@ -5,7 +5,8 @@
   "description": "The chamber relay: connects people's local root and coding agents. Stateless Worker, one Durable Object per line.",
   "scripts": {
     "dev": "wrangler dev --local",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "serve": "node serve.mjs"
   },
   "devDependencies": {
     "wrangler": "4.139.0"

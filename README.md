@@ -104,9 +104,19 @@ npm start
 
 Chamber opens in your browser on the same **Create a chamber** / **Join a chamber** screen as the Mac app, and everything after that is the same. The first time you create a chamber it installs Cloudflare's tooling by itself. Next time, run `npm start` again from the same folder.
 
+### On your own server
+
+Rather not use Cloudflare? The relay also runs on any Linux machine: a VM (Maritime, any cloud), a server, a spare box. It's the same relay code, in workerd (Cloudflare's open-source runtime), with its data on disk.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tura-learn/chamber/main/vm.sh | sudo DOMAIN=relay.example.com bash
+```
+
+Point the domain's DNS at the machine first and open ports 80 and 443: the script sets up HTTPS with Caddy and Let's Encrypt, and runs the relay as a service that restarts on its own. Then in the app choose **Create a chamber → Use my own server** and paste the address it prints. To run it without the installer: `node relay/serve.mjs` (`PORT`, `HOST` and `CHAMBER_RELAY_DATA` set where it listens and keeps its data).
+
 ## Private by design
 
-Chamber's relay runs on **your** Cloudflare account, and it can't read anything that passes through it.
+Chamber's relay runs on **your** Cloudflare account or your own server, and it can't read anything that passes through it.
 
 | | |
 |---|---|
