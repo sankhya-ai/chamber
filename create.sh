@@ -65,9 +65,9 @@ say "4/5  Deploying your relay"
 # whoami also refreshes an expired sign-in token, so the token read below is current.
 ACCT_ID="$(wr whoami --json 2>/dev/null | grep -Eo '"id": *"[a-f0-9]{32}"' | head -1 | grep -Eo '[a-f0-9]{32}')"
 if [ -n "$ACCT_ID" ]; then
-  # Read the OAuth token wrangler stored during login
-  CF_TOKEN=""
-  for f in \
+  # The token wrangler signs in with (refreshed if expired), else the one it stored during login
+  CF_TOKEN="$(wr auth token --json 2>/dev/null | grep -o '"token": *"[^"]*"' | sed 's/.*: *"//;s/"$//')"
+  [ -z "$CF_TOKEN" ] && for f in \
     "${WRANGLER_HOME:-/dev/null}/config/default.toml" \
     "$HOME/Library/Preferences/.wrangler/config/default.toml" \
     "${XDG_CONFIG_HOME:-$HOME/.config}/.wrangler/config/default.toml" \
