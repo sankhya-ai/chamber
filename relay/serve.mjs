@@ -31,6 +31,8 @@ const keep = {
   RETENTION_DAYS: process.env.CHAMBER_RETENTION_DAYS ?? "0",
   MAX_MESSAGES: process.env.CHAMBER_MAX_MESSAGES ?? "0",
   KEEP_FILES: process.env.CHAMBER_KEEP_FILES === "0" ? "0" : "1",
+  // Chamber Cloud: many chambers, each with a trial and a plan (see src/index.js).
+  ...(process.env.CHAMBER_HOSTED === "1" ? { HOSTED: "1", HOSTED_SECRET: process.env.CHAMBER_HOSTED_SECRET || "" } : {}),
 };
 // Any other relay var, e.g. CHAMBER_RELAY_VARS="IDLE_WIPE_SECONDS:60,BLOB_RETENTION_HOURS:2".
 const extra = String(process.env.CHAMBER_RELAY_VARS || "").split(",").map((v) => v.trim()).filter((v) => /^[A-Z_]+:.+$/.test(v));

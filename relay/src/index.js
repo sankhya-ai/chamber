@@ -38,6 +38,12 @@
 //                 highest priority), else held until one of theirs connects
 //   "*"           everyone on the line
 //
+// Hosted (var HOSTED = "1", Chamber Cloud): one relay serves many chambers. Each chamber registers
+// itself (the same claim call), keeps its own admin key, and gets a 7-day trial; after that it needs
+// an active plan with a seat for each member, which the billing service sets with the secret
+// HOSTED_SECRET (POST /v1/hosted/billing). A chamber past its trial without a plan can still be
+// managed by its admin, but its members can't connect until it's paid.
+//
 // Knocks: a message to an agent that isn't connected also sends its owner's boards a knock
 // ({t: "knock", id, from, to, ts}, no content), so the owner's app can wake that agent if the
 // owner allows the sender to.
@@ -58,6 +64,10 @@ const MSG_ID = /^[0-9a-f]{32}$/;
 const MAX_BLOB = 25 * 1024 * 1024;
 const IDLE_WIPE_MS = 10 * 60 * 1000;
 const KNOCK_WINDOW_MS = 24 * 3600 * 1000; // a board that connects hears of waiting messages this recent
+const TRIAL_MS = 7 * 24 * 3600 * 1000;
+const BILLING_GRACE_MS = 3 * 24 * 3600 * 1000; // a payment a few days late doesn't lock a team out
+const BILLING_URL = "https://chamber.sankhyaailabs.com/billing";
+const hosted = (env) => String(env.HOSTED || "") === "1";
 const MAX_MEMORY_FILE = 400_000; // sealed, base64
 const MAX_MEMORY_FILES = 2000;
 const MEMORY_PATH = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}\.md$/;
@@ -91,8 +101,9 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/") return request.headers.get("accept")?.includes("text/html") ? landing(url, await relayConfig(env)) : new Response("chamber relay\n");
-    if (url.pathname === "/v1/claim" && request.method === "POST") return claim(request, env);
-    if (url.pathname === "/v1/relay") return json({ claimed: (await relayConfig(env)).claimed, relay: RELAY_VERSION });
+    if (url.pathname === "/v1/claim" && request.method === "POST") return hosted(env) ? register(request, env) : claim(request, env);
+    if (url.pathname === "/v1/relay") return json(hosted(env) ? { claimed: false, hosted: true, relay: RELAY_VERSION } : { claimed: (await relayConfig(env)).claimed, relay: RELAY_VERSION });
+    if (url.pathname.startsWith("/v1/hosted/")) return hostedApi(request, env, url);
     const served = install(url);
     if (served) return served;
 
@@ -126,9 +137,14 @@ export default {
     const [, line, what, , , blob] = match;
     const token = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
     if (!LINE.test(line) || !token || (await lineOf(token)) !== line) return json({ error: "unauthorized" }, 401);
-    const config = await relayConfig(env);
+    // Hosted: each chamber keeps its own admin key (in its Durable Object); nothing relay-wide.
+    const config = hosted(env) ? { adminKey: null, lines: [] } : await relayConfig(env);
     const allowed = config.lines;
     if (allowed.length && !allowed.includes(line)) return json({ error: "this relay serves only its own chambers" }, 403);
+    if (hosted(env)) {
+      const refused = await env.LINES.get(env.LINES.idFromName(line)).fetch(new Request("https://line/hosted-check", { headers: { "x-line": line, "x-what": what } }));
+      if (!refused.ok) return refused;
+    }
     if (blob !== undefined) return blobs(request, env, line, blob, config, env.LINES.get(env.LINES.idFromName(line)));
     if (what === "ws" && request.headers.get("upgrade") !== "websocket") return json({ error: "expected a WebSocket" }, 426);
     const stub = env.LINES.get(env.LINES.idFromName(line));
@@ -185,6 +201,44 @@ async function claim(request, env) {
   return new Response(result.body, result);
 }
 
+// ----- Chamber Cloud ------------------------------------------------------------------------
+
+/** A chamber registers itself on the hosted relay: its admin key, and its trial starts. */
+async function register(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const claims = await signedByAdmin(String(body.adminPublic || ""), body.proof);
+  if (!claims || claims.op !== "claim" || !LINE.test(String(claims.line || ""))) return json({ error: "not a valid claim" }, 400);
+  const stub = env.LINES.get(env.LINES.idFromName(claims.line));
+  const result = await stub.fetch("https://line/hosted-register", { method: "POST", headers: { "x-line": claims.line }, body: JSON.stringify({ adminKey: body.adminPublic }) });
+  return new Response(result.body, result);
+}
+
+/**
+ * The billing service's side: POST /v1/hosted/billing { line, status, seats, paidUntil } sets a
+ * chamber's plan; GET /v1/hosted/status?line= tells its trial, plan and members. Both need
+ * HOSTED_SECRET. GET /v1/hosted/status also answers a member (the chamber's own token).
+ */
+async function hostedApi(request, env, url) {
+  if (!hosted(env)) return json({ error: "not found" }, 404);
+  const secret = String(env.HOSTED_SECRET || "");
+  const bearer = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+  const service = Boolean(secret) && bearer === secret;
+  if (url.pathname === "/v1/hosted/billing" && request.method === "POST") {
+    if (!service) return json({ error: "unauthorized" }, 401);
+    const body = await request.json().catch(() => ({}));
+    if (!LINE.test(String(body.line || ""))) return json({ error: "line required" }, 400);
+    const stub = env.LINES.get(env.LINES.idFromName(body.line));
+    return stub.fetch("https://line/hosted-billing", { method: "POST", headers: { "x-line": body.line }, body: JSON.stringify(body) });
+  }
+  if (url.pathname === "/v1/hosted/status" && request.method === "GET") {
+    const line = url.searchParams.get("line") || "";
+    if (!LINE.test(line)) return json({ error: "line required" }, 400);
+    if (!service && (!bearer || (await lineOf(bearer)) !== line)) return json({ error: "unauthorized" }, 401);
+    return env.LINES.get(env.LINES.idFromName(line)).fetch("https://line/hosted-status", { headers: { "x-line": line } });
+  }
+  return json({ error: "not found" }, 404);
+}
+
 function landing(url, config) {
   const make = `curl -fsSL ${url.origin}/new | sh`;
   const body = config.claimed
@@ -199,14 +253,17 @@ function landing(url, config) {
 async function blobs(request, env, line, blob, config = null, stub = null) {
   if (!env.BLOBS) return json({ error: "this relay has no file storage; send smaller files" }, 501);
   if (!BLOB.test(blob)) return json({ error: "bad blob id" }, 400);
-  if (config?.adminKey) {
+  // Hosted: the chamber's own admin key, in its Durable Object, checks the pass (member-check).
+  if (config?.adminKey || hosted(env)) {
     const pass = request.headers.get("x-chamber-pass");
     if (!pass) return json({ error: "a personal pass is required" }, 401);
-    const claims = await signedByAdmin(config.adminKey, pass);
-    if (!claims || claims.line !== line || !claims.member) return json({ error: "invalid pass" }, 403);
+    if (config?.adminKey) {
+      const claims = await signedByAdmin(config.adminKey, pass);
+      if (!claims || claims.line !== line || !claims.member) return json({ error: "invalid pass" }, 403);
+    }
     if (stub) {
       const chk = await stub.fetch(new Request("https://line/member-check", {
-        headers: { "x-chamber-pass": pass, "x-line": line, "x-admin-key": config.adminKey }
+        headers: { "x-chamber-pass": pass, "x-line": line, ...(config?.adminKey ? { "x-admin-key": config.adminKey } : {}) }
       }));
       if (!chk.ok) return chk;
     }
@@ -415,6 +472,57 @@ export class Line {
     return String(row.mentions || "").includes(`,${who.owner},`) && this.choose(who.owner) === who.agent;
   }
 
+  // ----- Chamber Cloud ---------------------------------------------------------------------
+
+  async hostedRegister(request) {
+    const { adminKey } = await request.json();
+    const line = request.headers.get("x-line");
+    const existing = await this.ctx.storage.get("hosted");
+    if (existing) {
+      if (existing.adminKey === adminKey) return json({ ok: true, claimed: true });
+      return json({ error: "this chamber already exists on Chamber Cloud" }, 409);
+    }
+    const now = Date.now();
+    const trialMs = Number(this.env.TRIAL_SECONDS) * 1000 || TRIAL_MS;
+    await this.ctx.storage.put("hosted", { adminKey, createdAt: now, trialEnds: now + trialMs, status: "trial", seats: 0, paidUntil: 0 });
+    await this.ctx.storage.put("adminKey", adminKey);
+    await this.ctx.storage.put("line", line);
+    this.key = adminKey;
+    this.line = line;
+    return json({ ok: true, claimed: true, trialEnds: now + trialMs });
+  }
+
+  async hostedBilling(request) {
+    const body = await request.json();
+    const plan = await this.ctx.storage.get("hosted");
+    if (!plan) return json({ error: "no such chamber on Chamber Cloud" }, 404);
+    const status = ["active", "cancelled", "enterprise"].includes(body.status) ? body.status : plan.status;
+    const next = {
+      ...plan,
+      status,
+      seats: Math.max(0, Math.floor(Number(body.seats ?? plan.seats) || 0)),
+      paidUntil: Number(body.paidUntil ?? plan.paidUntil) || 0,
+      account: String(body.account ?? plan.account ?? "").slice(0, 128),
+    };
+    await this.ctx.storage.put("hosted", next);
+    return json(await this.hostedStatus());
+  }
+
+  /** Where this chamber stands on Chamber Cloud: trial, plan, seats, members, and may it be used. */
+  async hostedStatus() {
+    const plan = await this.ctx.storage.get("hosted");
+    if (!plan) return { registered: false, access: false };
+    const now = Date.now();
+    const members = this.sql.exec("SELECT COUNT(*) AS n FROM names").toArray()[0].n;
+    const trial = now < plan.trialEnds;
+    const paid = plan.status === "enterprise" || (plan.status === "active" && plan.paidUntil + BILLING_GRACE_MS > now);
+    const access = trial || paid;
+    const reason = access ? "" : plan.status === "trial"
+      ? `this chamber's 7-day trial has ended: your admin can subscribe (US$5 per teammate a month) at ${BILLING_URL}`
+      : `this chamber's plan isn't active: your admin can renew it at ${BILLING_URL}`;
+    return { registered: true, createdAt: plan.createdAt, trialEnds: plan.trialEnds, trial, status: plan.status, seats: plan.seats, paidUntil: plan.paidUntil, members, access, reason, billing: BILLING_URL };
+  }
+
   /** The admin key in force for this chamber (from the Worker; kept for hibernated wake-ups). */
   async adminKey() {
     if (this.env.ADMIN_KEY) return this.env.ADMIN_KEY;
@@ -433,6 +541,17 @@ export class Line {
       const body = await request.json();
       await this.ctx.storage.put("config", { adminKey: body.adminKey, lines: body.lines, at: Date.now() });
       return json({ ok: true, claimed: true });
+    }
+    if (what === "hosted-register") return this.hostedRegister(request);
+    if (what === "hosted-billing") return this.hostedBilling(request);
+    if (what === "hosted-status") return json(await this.hostedStatus());
+    if (what === "hosted-check") {
+      const plan = await this.hostedStatus();
+      if (!plan.registered) return json({ error: "this chamber isn't on Chamber Cloud; create it again from the app" }, 404);
+      // Managing the chamber (members, invites, removal) always works, so an admin can sort out billing.
+      // Connections go through too: the relay refuses them itself, with the reason (see admit).
+      if (/^(admin|members|roster|ws)$/.test(request.headers.get("x-what") || "")) return json({ ok: true });
+      return plan.access ? json({ ok: true }) : json({ error: plan.reason, billing: BILLING_URL }, 402);
     }
     const headerKey = request.headers.get("x-admin-key");
     if (headerKey && headerKey !== this.key) {
@@ -692,6 +811,10 @@ export class Line {
   async admit(owner, pass) {
     const adminKey = await this.adminKey();
     if (!adminKey) return null;
+    if (hosted(this.env)) {
+      const plan = await this.hostedStatus();
+      if (!plan.access) return plan.reason;
+    }
     const claims = await signedByAdmin(adminKey, pass);
     const line = this.line || (await this.ctx.storage.get("line"));
     if (!claims || claims.line !== line || !claims.member) return "this chamber needs a personal invite: ask its admin for one";
@@ -699,6 +822,13 @@ export class Line {
     if (this.sql.exec("SELECT 1 FROM removed_names WHERE owner = ?", owner).toArray().length) return `the name ${owner} was removed from this chamber by its admin`;
     const holder = this.sql.exec("SELECT member FROM names WHERE owner = ?", owner).toArray()[0];
     if (holder && holder.member !== claims.member) return `the name ${owner} belongs to someone else in this chamber; pick another (chamber name <new>)`;
+    if (!holder && hosted(this.env)) {
+      const plan = await this.hostedStatus();
+      const isNewMember = !this.sql.exec("SELECT 1 FROM names WHERE member = ?", claims.member).toArray().length;
+      if (plan.status === "active" && isNewMember && plan.members >= plan.seats) {
+        return `this chamber's plan has ${plan.seats} seat${plan.seats === 1 ? "" : "s"}, all taken: ask your admin to add one at ${BILLING_URL}`;
+      }
+    }
     if (!holder) {
       this.sql.exec("DELETE FROM names WHERE member = ?", claims.member); // a member holds one name: renaming frees the old one
       this.sql.exec("INSERT INTO names (owner, member, since) VALUES (?, ?, ?)", owner, claims.member, Date.now());
