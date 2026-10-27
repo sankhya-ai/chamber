@@ -1,5 +1,5 @@
 import { ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
@@ -18,16 +18,19 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
     api.detectHarnesses().then((res) => setProject(res.project || ""), () => undefined);
   }, []);
 
+  // Going back abandons an attempt in flight, so its late result (or error) never shows on another screen.
+  const attempt = useRef(0);
   const run = async (action: () => Promise<unknown>, fallback: string) => {
+    const mine = ++attempt.current;
     setLoading(true);
     setError("");
     try {
       await action();
-      onConfigured();
+      if (mine === attempt.current) onConfigured();
     } catch (err: any) {
-      setError(err?.message || fallback);
+      if (mine === attempt.current) setError(err?.message || fallback);
     } finally {
-      setLoading(false);
+      if (mine === attempt.current) setLoading(false);
     }
   };
 
@@ -42,7 +45,7 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
   };
 
   const back = (
-    <button type="button" onClick={() => { setStep("choose"); setError(""); }} className="mb-4 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+    <button type="button" onClick={() => { attempt.current++; setLoading(false); setStep("choose"); setError(""); }} className="mb-4 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
       <ArrowLeft className="size-3.5" /> Back
     </button>
   );
@@ -97,10 +100,10 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
               <input value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="Optional. Defaults to your git name" className={input} />
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              Chamber sets up a private, end-to-end encrypted relay in your own free Cloudflare account. Your browser opens once to sign in to Cloudflare.
+              Chamber sets up a private, end-to-end encrypted relay in your own free Cloudflare account. A browser window opens once to sign in to Cloudflare: finish signing in there, then come back here.
             </p>
             <Button type="submit" disabled={loading} className="h-10 w-full gap-2 text-sm">
-              {loading ? <><Loader2 className="size-4 animate-spin" /> Creating your chamber…</> : <>Create chamber <ArrowRight className="size-4" /></>}
+              {loading ? <><Loader2 className="size-4 animate-spin" /> Waiting for Cloudflare sign-in…</> : <>Create chamber <ArrowRight className="size-4" /></>}
             </Button>
           </form>
         ) : null}

@@ -25,6 +25,8 @@ test("an invite code, a link and the old curl command all name the same chamber"
     assert.equal(invite.pass, "pass");
   }
   assert.throws(() => Invite.fromInput("not an invite"));
+  // Only the key, without the relay address: say what is missing.
+  assert.throws(() => Invite.fromInput(`${SECRET}~pass.sig`), /missing the start/);
 });
 
 test("logout archives the config, removes it, and keeps the admin key", () => {

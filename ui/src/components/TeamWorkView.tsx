@@ -495,6 +495,19 @@ export function TeamWorkView({
           </div>
         ) : null}
 
+        {(data?.projects ?? []).length === 0 ? (
+          <div className="flex flex-col gap-3 rounded-xl border border-primary/30 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h4 className="text-sm font-semibold text-foreground">Connect your first project</h4>
+              <p className="mt-0.5 text-xs text-muted-foreground">Pick a project folder and the coding agents in it (Claude Code, Codex, Antigravity) join the chamber. You can add more any time.</p>
+            </div>
+            <Button size="sm" onClick={onAddWorkspace} className="h-8 shrink-0 gap-1.5 text-xs font-medium">
+              <FolderGit2 className="size-3.5" />
+              <span>Choose a folder</span>
+            </Button>
+          </div>
+        ) : null}
+
         {/* Workspaces & Agent Fleet Panel */}
         <div className="rounded-xl border bg-card p-4 space-y-3">
           <div className="flex items-center justify-between">

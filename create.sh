@@ -58,11 +58,60 @@ fi
 
 # ----- 4. the relay ------------------------------------------------------------------------
 say "4/5  Deploying your relay"
+
+# New Cloudflare accounts need a workers.dev subdomain before the first deploy.
+# Wrangler prompts interactively when there's a TTY, but in piped/CI contexts it fails.
+# Auto-register one via the Cloudflare API so users never have to visit the dashboard.
+ACCT_ID="$(wr whoami 2>&1 | grep -Eo '[a-f0-9]{32}' | head -1)"
+if [ -n "$ACCT_ID" ]; then
+  # Read the OAuth token wrangler stored during login
+  CF_TOKEN=""
+  for f in \
+    "${WRANGLER_HOME:-/dev/null}/config/default.toml" \
+    "$HOME/Library/Preferences/.wrangler/config/default.toml" \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/.wrangler/config/default.toml" \
+    "$HOME/.wrangler/config/default.toml"; do
+    [ -f "$f" ] && CF_TOKEN="$(grep -E '^oauth_token' "$f" 2>/dev/null | head -1 | sed 's/.*= *"//;s/".*//')" && [ -n "$CF_TOKEN" ] && break
+  done
+  [ -z "$CF_TOKEN" ] && CF_TOKEN="${CLOUDFLARE_API_TOKEN:-}"
+
+  if [ -n "$CF_TOKEN" ]; then
+    # Check if subdomain already exists; if not, register one
+    HAS_SUB="$(curl -fsS -H "Authorization: Bearer $CF_TOKEN" \
+      "https://api.cloudflare.com/client/v4/accounts/$ACCT_ID/workers/subdomain" 2>/dev/null \
+      | grep -o '"subdomain":"[^"]*"' | head -1 || true)"
+    if [ -z "$HAS_SUB" ]; then
+      SUB_NAME="$(whoami | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')-$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' ')"
+      echo "Registering $SUB_NAME.workers.dev for your account…"
+      curl -fsS -X PUT \
+        -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" \
+        -d "{\"subdomain\":\"$SUB_NAME\"}" \
+        "https://api.cloudflare.com/client/v4/accounts/$ACCT_ID/workers/subdomain" >/dev/null 2>&1 || true
+    fi
+  fi
+fi
+
 LOG="$(mktemp)"
 wr deploy < "$TTY" 2>&1 | tee "$LOG" | grep -E "https://|Uploaded|ERROR|✘" || true
 RELAY="$(grep -Eo 'https://[a-zA-Z0-9.-]+\.workers\.dev' "$LOG" | head -1)"
+if [ -z "$RELAY" ]; then
+  # Most common first-time failure: Cloudflare account has no workers.dev subdomain yet
+  if grep -qi "workers.dev subdomain" "$LOG" 2>/dev/null; then
+    ONBOARDING="$(grep -Eo 'https://dash.cloudflare.com/[^ ]*workers/onboarding' "$LOG" | head -1)"
+    rm -f "$LOG"
+    echo
+    echo "Your Cloudflare account needs a workers.dev subdomain before Chamber can deploy."
+    echo
+    echo "  1. Open ${ONBOARDING:-https://dash.cloudflare.com → Workers & Pages} in your browser"
+    echo "  2. Pick a subdomain (e.g. yourname.workers.dev)"
+    echo "  3. Run this script again"
+    echo
+    fail "register a workers.dev subdomain first (see above)"
+  fi
+  rm -f "$LOG"
+  fail "the deploy did not print a workers.dev address (see above)"
+fi
 rm -f "$LOG"
-[ -n "$RELAY" ] || fail "the deploy did not print a workers.dev address (see above)"
 
 # Your chamber: keep the one you have on this relay, else make one. Only chambers listed
 # here may use the relay. Personal invites: your admin key signs each teammate's pass; the
