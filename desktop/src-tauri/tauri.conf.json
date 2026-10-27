@@ -60,6 +60,15 @@
       "nsis": {
         "installMode": "currentUser"
       }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkzNkQwQzczNDQ5RjhCODgKUldTSWk1OUVjd3h0azMvR2VkVHIwZEVUVXFDNDNZcCt5QlF1T1RJcHFqMHB2TnlpUXk0bDhBeC8K",
+      "endpoints": [
+        "https://github.com/tura-learn/chamber/releases/latest/download/latest.json"
+      ]
     }
   }
 }

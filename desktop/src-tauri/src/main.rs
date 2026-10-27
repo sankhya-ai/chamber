@@ -11,8 +11,12 @@ use std::time::Duration;
 use std::os::windows::process::CommandExt;
 
 use tauri::{Manager, RunEvent};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+use tauri_plugin_updater::UpdaterExt;
 
 const PORT: u16 = 7878;
+// How often a running app looks for a newer Chamber (and once, shortly after it opens).
+const UPDATE_EVERY: Duration = Duration::from_secs(6 * 3600);
 // The repository this app was built from: bin/chamber.mjs is the daemon.
 const CLI: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../bin/chamber.mjs");
 
@@ -44,10 +48,41 @@ fn start_daemon(app: &tauri::App) -> Option<Child> {
         .ok()
 }
 
+/// Look for a newer Chamber; download and install it, then offer to restart into it.
+/// Quietly does nothing when offline or up to date: the next check tries again.
+async fn update(app: tauri::AppHandle) {
+    let Ok(updater) = app.updater() else { return };
+    let Ok(Some(update)) = updater.check().await else { return };
+    let version = update.version.clone();
+    if update.download_and_install(|_, _| {}, || {}).await.is_err() {
+        return;
+    }
+    let handle = app.clone();
+    app.dialog()
+        .message(format!("Chamber {version} is ready. Restart to use it? Your chambers and agents stay as they are."))
+        .title("Update ready")
+        .buttons(MessageDialogButtons::OkCancelCustom("Restart now".into(), "Later".into()))
+        .show(move |restart| {
+            if restart {
+                handle.restart();
+            }
+        });
+}
+
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                loop {
+                    update(handle.clone()).await;
+                    tokio::time::sleep(UPDATE_EVERY).await;
+                }
+            });
             let daemon = start_daemon(app);
             app.manage(Daemon(Mutex::new(daemon)));
             let window = app.get_webview_window("main").expect("main window");

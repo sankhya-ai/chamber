@@ -11,6 +11,9 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/src-tauri"
 
 RELEASE=false; [ "${1:-}" = "--release" ] && RELEASE=true
+VERSION="$(node -p 'require("./tauri.conf.json").version')"
+# The updater's signing key (the app trusts only updates signed with it): kept outside the repo.
+UPDATER_KEY="${CHAMBER_UPDATER_KEY:-$HOME/.chamber-release/updater.key}"
 IDENTITY="${CHAMBER_SIGNING_IDENTITY:-Developer ID Application: Shreya Malaviya (986JMARB95)}"
 PROFILE="${CHAMBER_NOTARY_PROFILE:-tura-notary}"
 ENTITLEMENTS="$PWD/entitlements.plist"
@@ -31,6 +34,11 @@ if $RELEASE; then
     fi
   done
   export APPLE_SIGNING_IDENTITY="$IDENTITY"
+  [ -f "$UPDATER_KEY" ] || { echo "No updater key at $UPDATER_KEY: the app could not update to this release." >&2; exit 1; }
+fi
+# Tauri signs the update archive (Chamber.app.tar.gz) when it has the key; without it, no archive.
+if [ -f "$UPDATER_KEY" ]; then
+  export TAURI_SIGNING_PRIVATE_KEY="$(cat "$UPDATER_KEY")" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
 fi
 
 CHAMBER_NODE="$(command -v node)" npx --yes @tauri-apps/cli@2 build --bundles app
@@ -52,6 +60,19 @@ if $RELEASE; then
   xcrun stapler staple "$DMG"
   spctl -a -vvv -t exec "$OUT/macos/Chamber.app"
   xcrun stapler validate "$DMG"
+
+  # The update: the notarized app (stapled too), as an archive signed for the updater, and the
+  # latest.json the app checks (GitHub release v$VERSION, marked latest).
+  xcrun stapler staple "$OUT/macos/Chamber.app"
+  UPDATE="$OUT/update"; rm -rf "$UPDATE"; mkdir -p "$UPDATE"
+  COPYFILE_DISABLE=1 tar -czf "$UPDATE/Chamber.app.tar.gz" -C "$OUT/macos" Chamber.app
+  npx --yes @tauri-apps/cli@2 signer sign -f "$UPDATER_KEY" -p "" "$UPDATE/Chamber.app.tar.gz" >/dev/null
+  SIG="$(cat "$UPDATE/Chamber.app.tar.gz.sig")" VERSION="$VERSION" node -e '
+    const { VERSION, SIG } = process.env;
+    console.log(JSON.stringify({ version: VERSION, pub_date: new Date().toISOString(), platforms: {
+      "darwin-aarch64": { signature: SIG, url: `https://github.com/tura-learn/chamber/releases/download/v${VERSION}/Chamber.app.tar.gz` } } }, null, 2));
+  ' > "$UPDATE/latest.json"
+  echo "Update for the app: gh release create v$VERSION $UPDATE/Chamber.app.tar.gz $UPDATE/latest.json $DMG --latest"
 fi
 
 echo "Upload to R2: chamber/releases/stable/<version>/chamber-darwin-arm64.dmg  ($PWD/$DMG)"
