@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { api } from "@/lib/api";
 import { KIND, type BoardData } from "@/lib/board";
 import { cn } from "@/lib/utils";
+import { AgentTools } from "@/components/AgentTools";
 import { WakeRules } from "@/components/WakeRules";
 
 export function AgentInspectorDialog({
@@ -87,6 +88,8 @@ export function AgentInspectorDialog({
               Claude Code, Codex, and Antigravity run on your computer inside their respective projects. Chamber carries messages through your team's relay. A teammate's agent can start one of yours only if you allow it below, and only as much as you allow.
             </p>
           </div>
+
+          <AgentTools />
 
           {/* Connected Workspaces */}
           <div className="space-y-3">

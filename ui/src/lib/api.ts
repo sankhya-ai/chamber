@@ -2,6 +2,15 @@
 
 import type { BoardData, Talk } from "./board.ts";
 
+export interface AgentTool {
+  id: "claude" | "codex";
+  label: string;
+  installed: boolean;
+  version: string | null;
+  signedIn: boolean;
+  job: { action: "install" | "login"; running: boolean; ok: boolean | null; output: string; link: string | null } | null;
+}
+
 export interface WakeRule {
   who: "nobody" | "team" | string[];
   can: "answer" | "work";
@@ -139,6 +148,8 @@ export const api = {
     post<{ ok: boolean; owner: string; relay: string; admin?: boolean }>("/api/board/onboarding/new", { relay, as, project }),
   cloudflareAuth: () =>
     request<{ authenticated: boolean; account: string | null }>("/api/board/onboarding/cloudflare-auth"),
+  agentTools: () => request<{ tools: AgentTool[] }>("/api/board/agent-tools"),
+  startAgentTool: (tool: string, action: "install" | "login") => post<{ tools: AgentTool[] }>("/api/board/agent-tools", { tool, action }),
   wakeRules: () => request<{ agents: Record<string, WakeRule>; log: WakeEntry[] }>("/api/board/wake"),
   setWakeRule: (agent: string, rule: WakeRule) => post<{ agents: Record<string, WakeRule>; log: WakeEntry[] }>("/api/board/wake", { agent, ...rule }),
   wakeRun: (id: string) => request<{ events: any[] }>(`/api/board/wake/${id}`),
