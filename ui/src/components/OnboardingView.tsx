@@ -4,10 +4,11 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
 // Every option is end-to-end encrypted: the relay, wherever it runs, stores only ciphertext.
+// Chamber Cloud (we run the relay) isn't open yet: shown, not choosable.
 const HOSTS = [
-  { id: "cloud", title: "Chamber Cloud", copy: "We run it for you. Free for 7 days, then US$5 (₹449) per teammate a month. Nothing to set up." },
   { id: "cloudflare", title: "Your Cloudflare account", copy: "Free. Chamber sets up a relay in your Cloudflare account; you sign in to Cloudflare once in your browser." },
   { id: "server", title: "Your own server", copy: "Free. Run the relay on a VM or any Linux server, and keep every message and file there." },
+  { id: "cloud", title: "Chamber Cloud", copy: "We run it for you, nothing to set up. Coming soon.", soon: true },
 ] as const;
 
 const input = "w-full rounded-lg border bg-background p-2.5 text-sm outline-none focus:border-ring focus:ring-1 focus:ring-ring";
@@ -21,7 +22,7 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
   const [project, setProject] = useState("");
   const [progress, setProgress] = useState("");
   // Where the chamber's relay runs: Chamber Cloud (hosted, a 7-day trial), your Cloudflare, or your server.
-  const [host, setHost] = useState<"cloud" | "cloudflare" | "server">("cloud");
+  const [host, setHost] = useState<"cloud" | "cloudflare" | "server">("cloudflare");
   const [relay, setRelay] = useState("");
 
   // The folder the app was started in becomes your first workspace; more are added in the app.
@@ -137,8 +138,8 @@ export function OnboardingView({ onConfigured }: { onConfigured: () => void }) {
             <fieldset className="space-y-2" disabled={loading}>
               <legend className="mb-1.5 block text-xs font-medium">Where it runs</legend>
               {HOSTS.map((h) => (
-                <label key={h.id} className={`flex cursor-pointer gap-2.5 rounded-lg border p-3 text-left transition ${host === h.id ? "border-primary bg-primary/5" : "hover:bg-muted/40"}`}>
-                  <input type="radio" name="host" className="mt-0.5" checked={host === h.id} onChange={() => { setHost(h.id); setError(""); }} />
+                <label key={h.id} className={`flex gap-2.5 rounded-lg border p-3 text-left transition ${"soon" in h ? "cursor-default border-dashed opacity-60" : host === h.id ? "cursor-pointer border-primary bg-primary/5" : "cursor-pointer hover:bg-muted/40"}`}>
+                  <input type="radio" name="host" className="mt-0.5" disabled={"soon" in h} checked={host === h.id} onChange={() => { setHost(h.id); setError(""); }} />
                   <span>
                     <span className="block text-sm font-medium">{h.title}</span>
                     <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{h.copy}</span>
