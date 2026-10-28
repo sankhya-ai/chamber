@@ -410,7 +410,8 @@ async function main() {
         const arrived = new Promise((resolve) => {
           const client = new LineClient(invite, agent, { kind: opts.agent ? "claude-code" : "terminal", answers: true, cursorPath: inbox.cursorPath, onMessage: (m) => resolve([client, inbox.add(m)]) });
           client.run();
-          setTimeout(() => resolve([client, null]), Number(opts.timeout || 120) * 1000);
+          // unref: once a message came, this timer mustn't keep the command running until it fires.
+          setTimeout(() => resolve([client, null]), Number(opts.timeout || 120) * 1000).unref();
         });
         const [client, record] = await arrived;
         client.close();
