@@ -63,6 +63,8 @@ const BLOB = /^[0-9a-f]{32}$/;
 const MSG_ID = /^[0-9a-f]{32}$/;
 const MAX_BLOB = 25 * 1024 * 1024;
 const IDLE_WIPE_MS = 10 * 60 * 1000;
+const POLL_WAIT_MS = 25_000; // a long poll answers at once when there's something, else after this
+const POLL_IDLE_MS = 60_000; // a poll session not heard from for this long has left
 const KNOCK_WINDOW_MS = 24 * 3600 * 1000; // a board that connects hears of waiting messages this recent
 const TRIAL_MS = 7 * 24 * 3600 * 1000;
 const BILLING_GRACE_MS = 3 * 24 * 3600 * 1000; // a payment a few days late doesn't lock a team out
@@ -132,7 +134,7 @@ export default {
       return json({ error: "line required for gate review" }, 400);
     }
 
-    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|roster|members|admin|sync|coordination(?:\/[a-zA-Z0-9_-]+)?|memory(?:\/(?:file|commit|history))?|gates(?:\/([0-9a-f]{16,64}))?|gate\/([0-9a-f]{16,64})|restart|blobs\/([^/]+))$/);
+    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|poll(?:\/(?:open|send|close))?|roster|members|admin|sync|coordination(?:\/[a-zA-Z0-9_-]+)?|memory(?:\/(?:file|commit|history))?|gates(?:\/([0-9a-f]{16,64}))?|gate\/([0-9a-f]{16,64})|restart|blobs\/([^/]+))$/);
     if (!match) return json({ error: "not found" }, 404);
     const [, line, what, , , blob] = match;
     const token = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
@@ -281,6 +283,47 @@ async function blobs(request, env, line, blob, config = null, stub = null) {
     return new Response(object.body, { headers: { "content-type": "application/octet-stream" } });
   }
   return json({ error: "PUT or GET" }, 405);
+}
+
+/** A long-poll session, shaped like the WebSockets the Line keeps (send, attachment, close). */
+class PollSocket {
+  constructor(id) {
+    this.id = id;
+    this.queue = [];
+    this.attachment = null;
+    this.closed = null;
+    this.seen = Date.now();
+    this.waiting = null;
+  }
+  send(frame) {
+    if (this.closed) throw new Error("closed");
+    this.queue.push(JSON.parse(frame));
+    this.waiting?.();
+  }
+  serializeAttachment(value) {
+    this.attachment = value;
+  }
+  deserializeAttachment() {
+    return this.attachment;
+  }
+  close(code = 1000, reason = "") {
+    if (this.closed) return;
+    this.closed = { code, reason };
+    this.waiting?.();
+  }
+  /** Until a frame arrives, the session closes, or `ms` pass. */
+  wait(ms) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(done, ms);
+      const self = this;
+      function done() {
+        clearTimeout(timer);
+        if (self.waiting === done) self.waiting = null;
+        resolve();
+      }
+      this.waiting = done;
+    });
+  }
 }
 
 export class Line {
@@ -551,7 +594,7 @@ export class Line {
       if (!plan.registered) return json({ error: "this chamber isn't on Chamber Cloud; create it again from the app" }, 404);
       // Managing the chamber (members, invites, removal) always works, so an admin can sort out billing.
       // Connections go through too: the relay refuses them itself, with the reason (see admit).
-      if (/^(admin|members|roster|ws)$/.test(request.headers.get("x-what") || "")) return json({ ok: true });
+      if (/^(admin|members|roster|ws|poll(\/\w+)?)$/.test(request.headers.get("x-what") || "")) return json({ ok: true });
       return plan.access ? json({ ok: true }) : json({ error: plan.reason, billing: BILLING_URL }, 402);
     }
     const headerKey = request.headers.get("x-admin-key");
@@ -666,16 +709,60 @@ export class Line {
     if (what === "coordination" || what.startsWith("coordination/")) {
       return this.handleCoordination(what, request);
     }
+    if (what === "poll" || what.startsWith("poll/")) return this.poll(what, request);
     const pair = new WebSocketPair();
     this.ctx.acceptWebSocket(pair[1]);
     return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+
+  // ----- long polling: the same conversation over plain HTTPS ----------------------------
+  // For networks and hosts that refuse WebSockets (some proxies, Maritime's public URLs). A poll
+  // session stands in for a socket (PollSocket below): frames from the client arrive by POST
+  // poll/send, frames for it wait until its next GET poll, which holds up to POLL_WAIT_MS. A
+  // session not polled for POLL_IDLE_MS has left. Sessions live in memory: if this object
+  // restarts, the client opens a new one and catches up from its cursor, as after a reconnect.
+
+  async poll(what, request) {
+    this.pollers ??= new Map();
+    const now = Date.now();
+    for (const [id, session] of this.pollers) {
+      if (now - session.seen > POLL_IDLE_MS) {
+        this.pollers.delete(id);
+        session.close(1001, "stopped polling");
+        this.left(session);
+      }
+    }
+    if (what === "poll/open") {
+      const id = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+      this.pollers.set(id, new PollSocket(id));
+      return json({ sid: id, wait: POLL_WAIT_MS });
+    }
+    const id = new URL(request.url).searchParams.get("sid") || "";
+    const session = this.pollers.get(id);
+    if (!session) return json({ error: "no such poll session; open a new one" }, 404);
+    session.seen = now;
+    if (what === "poll/send") {
+      await this.webSocketMessage(session, await request.text());
+      return json({ ok: true });
+    }
+    if (what === "poll/close") {
+      this.pollers.delete(id);
+      session.close(1000, "closed");
+      this.left(session);
+      return json({ ok: true });
+    }
+    if (!session.queue.length && !session.closed) await session.wait(POLL_WAIT_MS);
+    session.seen = Date.now();
+    const frames = session.queue.splice(0);
+    if (session.closed) this.pollers.delete(id);
+    return json({ frames, closed: session.closed });
   }
 
   // ----- the roster ---------------------------------------------------------
 
   members() {
     const out = [];
-    for (const ws of this.ctx.getWebSockets()) {
+    for (const ws of [...this.ctx.getWebSockets(), ...(this.pollers?.values() ?? [])]) {
       const who = ws.deserializeAttachment();
       if (who && who.agent) out.push({ ws, who });
     }
