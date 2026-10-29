@@ -20,27 +20,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # The CLI has no dependencies (and so no lockfile); only the relay does.
       - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: "npm"
-
-      - name: Install root dependencies
-        run: npm ci || npm install
+          cache-dependency-path: relay/package-lock.json
 
       - name: Install relay dependencies
         working-directory: ./relay
-        run: npm ci || npm install
+        run: npm ci
 
-      - name: Run Security Audit Test Suite
-        run: node --test test/security_audit.test.mjs
-
-      - name: Run Coordination & Distributed ACP Test Suite
-        run: node --test test/coordination.test.mjs
-
-      - name: Run Integration & Relay Test Suite
-        run: node --test test/chamber.test.mjs
+      - name: Run the test suite
+        run: npm test
 
   desktop-check:
     name: Desktop Build Check (Rust/Tauri)
@@ -56,6 +49,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      # The app ships Node beside itself; cargo check only needs a file where bundle.sh puts it.
+      - name: Stand in for the bundled Node
+        working-directory: ./desktop/src-tauri
+        run: mkdir -p binaries && cp "$(command -v node)" "binaries/node-$(rustc -vV | sed -n 's/^host: //p')"
 
       - name: Check Desktop Tauri Crate
         working-directory: ./desktop/src-tauri
