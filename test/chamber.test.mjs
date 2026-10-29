@@ -147,6 +147,7 @@ test("a project's Claude Code: asked, shown mid-task by the hook, woken when idl
     "memory_write",
     "memory_edit",
     "decision",
+    "contract",
     "coordinate_ask",
     "coordinate_delegate",
     "coordinate_review",
@@ -204,6 +205,72 @@ test("a project's Claude Code: asked, shown mid-task by the hook, woken when idl
 
   nitin.close();
   server.close();
+});
+
+test("contract changes: publish reaches a working consumer mid-task and a new session, acks reach the producer", async () => {
+  const invite = Invite.create(relay);
+  const homeBE = tmp("nitin");
+  const homeFE = tmp("rohan");
+  const projectBE = tmp("api");
+  const projectFE = tmp("web");
+  assert.equal((await run(["join", String(invite), "--as", "nitin"], { home: homeBE })).code, 0);
+  assert.equal((await run(["join", String(invite), "--as", "rohan"], { home: homeFE })).code, 0);
+  await invite.ready();
+
+  const be = mcp(homeBE, "claude-code.api", projectBE);
+  const fe = mcp(homeFE, "codex.web", projectFE);
+  await be.call("initialize", { protocolVersion: "2025-06-18" });
+  await fe.call("initialize", { protocolVersion: "2025-06-18" });
+
+  // BE registers the contract it produces; FE subscribes as a consumer.
+  assert.match((await be.tool("contract", { action: "register", name: "auth-token", title: "Auth token response", summary: "expires_in: ISO string" })).text, /Registered auth-token/);
+  assert.match((await fe.tool("contract", { action: "subscribe", name: "auth-token" })).text, /Subscribed to auth-token/);
+
+  // BE publishes a change: the consumer is told automatically, no human relaying.
+  const published = await be.tool("contract", { action: "publish", name: "auth-token", summary: "expires_at_epoch_seconds added alongside the ISO field", decision: "d-20261029-02" });
+  assert.match(published.text, /Published auth-token v2/);
+  assert.match(published.text, /Notified 1 consumer/);
+
+  // The working FE agent sees the notice mid-task through its hook, once.
+  let shown;
+  for (let i = 0; i < 50; i++) {
+    shown = await run(["hook", "--agent", "codex.web"], { home: homeFE, input: JSON.stringify({ hook_event_name: "PostToolUse" }) });
+    if (shown.stdout) break;
+    await sleep(100);
+  }
+  const context = JSON.parse(shown.stdout).hookSpecificOutput;
+  assert.match(context.additionalContext, /published auth-token v2: expires_at_epoch_seconds added/);
+  assert.match(context.additionalContext, /stance=adapted/);
+  assert.equal((await run(["hook", "--agent", "codex.web"], { home: homeFE, input: "{}" })).stdout, "", "the notice is shown once");
+
+  // A fresh FE session starts with the unacknowledged change in its bootstrap.
+  let started;
+  for (let i = 0; i < 50; i++) {
+    started = await run(["hook", "--agent", "codex.web"], { home: homeFE, input: JSON.stringify({ hook_event_name: "SessionStart" }) });
+    if (started.stdout.includes("auth-token v2")) break;
+    await sleep(100);
+  }
+  assert.match(started.stdout, /Contract changes you have not acknowledged/);
+  assert.match(started.stdout, /auth-token v2: expires_at_epoch_seconds added/);
+
+  // FE adapts and records evidence; the producer is told, and the registry shows who caught up.
+  assert.match((await fe.tool("contract", { action: "ack", name: "auth-token", stance: "adapted", note: "web/auth.ts prefers seconds with ISO fallback; both rollout orders pass" })).text, /producer has been told/);
+  let told;
+  for (let i = 0; i < 50; i++) {
+    told = await run(["hook", "--agent", "claude-code.api"], { home: homeBE, input: JSON.stringify({ hook_event_name: "PostToolUse" }) });
+    if (told.stdout) break;
+    await sleep(100);
+  }
+  assert.match(told.stdout, /adapted to auth-token v2/);
+  const status = await be.tool("contract", { action: "status", name: "auth-token" });
+  assert.match(status.text, /rohan\/codex\.web: ADAPTED — web\/auth\.ts prefers seconds/);
+
+  // The next fresh FE session is clean again.
+  started = await run(["hook", "--agent", "codex.web"], { home: homeFE, input: JSON.stringify({ hook_event_name: "SessionStart" }) });
+  assert.equal(started.stdout.includes("Contract changes you have not acknowledged"), false);
+
+  be.close();
+  fe.close();
 });
 
 test("setup adds the hooks next to the project's own, idempotently, and remove takes them out", async () => {
