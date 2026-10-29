@@ -36,12 +36,16 @@ if $RELEASE; then
   export APPLE_SIGNING_IDENTITY="$IDENTITY"
   [ -f "$UPDATER_KEY" ] || { echo "No updater key at $UPDATER_KEY: the app could not update to this release." >&2; exit 1; }
 fi
-# Tauri signs the update archive (Chamber.app.tar.gz) when it has the key; without it, no archive.
+# Tauri signs the update archive (Chamber.app.tar.gz) when it has the key; without it (CI), no
+# archive: it would otherwise fail the build asking for the key.
+NO_UPDATER=()
 if [ -f "$UPDATER_KEY" ]; then
   export TAURI_SIGNING_PRIVATE_KEY="$(cat "$UPDATER_KEY")" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+else
+  NO_UPDATER=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
 fi
 
-CHAMBER_NODE="$(command -v node)" npx --yes @tauri-apps/cli@2 build --bundles app
+CHAMBER_NODE="$(command -v node)" npx --yes @tauri-apps/cli@2 build --bundles app ${NO_UPDATER[@]+"${NO_UPDATER[@]}"}
 
 # The disk image: the signed app and an Applications shortcut (hdiutil, not Tauri's Finder-scripted one).
 OUT="target/release/bundle"
