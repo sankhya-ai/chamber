@@ -8,10 +8,16 @@ import { ContractRegistry, REGISTRY_PATH } from "../lib/contracts.mjs";
 import { DecisionLedger } from "../lib/decisions.mjs";
 import { LineTools } from "../lib/mcp.mjs";
 
-// A TeamMemory-shaped stub: whole files in a map, with memory.mjs's read/write/edit semantics.
+// A TeamMemory-shaped stub: whole files in a map, with memory.mjs's read/write/edit/commit
+// semantics (a commit based on an old version is refused, as the relay does).
 function stubMemory() {
   const files = new Map(); // path -> { version, text }
   return {
+    async commit(changes) {
+      for (const c of changes) if ((files.get(c.path)?.version ?? 0) !== c.base) return { ok: false, current: [] };
+      for (const c of changes) files.set(c.path, { version: c.base + 1, text: c.text });
+      return { ok: true };
+    },
     async read(path) {
       const f = files.get(path);
       return f ? { path, ...f } : null;
@@ -371,4 +377,28 @@ test("installer packaging: every relative import of a shipped client file is its
   // and every lib file is either shipped or deliberately server/desktop-only
   const libs = readdirSync(new URL("../lib", import.meta.url)).filter((f) => f.endsWith(".mjs")).map((f) => `lib/${f}`);
   assert.ok(libs.filter((f) => !shipped.has(f)).length <= 2, "unshipped lib files grew");
+});
+
+test("a consumer subscribing while the producer publishes is kept, and told", async () => {
+  const memory = stubMemory();
+  const producer = new ContractRegistry(memory, "nitin/claude-code.api");
+  await producer.register({ name: "auth-token", title: "Auth token response" });
+  await new ContractRegistry(memory, "rohan/codex.web").subscribe("auth-token");
+  await producer.publish({ name: "auth-token", summary: "expires_at added" });
+  // Between the next publish's read and its commit, a second consumer subscribes.
+  const read = memory.read.bind(memory);
+  let raced = false;
+  memory.read = async (path) => {
+    const file = await read(path);
+    if (!raced) {
+      raced = true;
+      await new ContractRegistry({ ...memory, read }, "dev/codex.jobs").subscribe("auth-token");
+    }
+    return file;
+  };
+  const { version, notify } = await producer.publish({ name: "auth-token", summary: "expires_at_epoch_seconds added" });
+  memory.read = read;
+  assert.equal(version, 3);
+  assert.deepEqual(notify, ["rohan/codex.web", "dev/codex.jobs"]);
+  assert.deepEqual((await producer.get("auth-token")).consumers.map((c) => c.agent), ["rohan/codex.web", "dev/codex.jobs"]);
 });
