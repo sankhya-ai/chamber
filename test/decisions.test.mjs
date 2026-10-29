@@ -4,11 +4,19 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { DecisionLedger, LEDGER_PATH } from "../lib/decisions.mjs";
+import { LineTools } from "../lib/mcp.mjs";
 
-// A TeamMemory-shaped stub: whole files in a map, with memory.mjs's read/write/edit semantics.
+// A TeamMemory-shaped stub: whole files in a map, with memory.mjs's read/write/edit/commit
+// semantics (a commit based on an old version is refused, as the relay does).
 function stubMemory() {
   const files = new Map(); // path -> { version, text }
   return {
+    files,
+    async commit(changes) {
+      for (const c of changes) if ((files.get(c.path)?.version ?? 0) !== c.base) return { ok: false, current: [] };
+      for (const c of changes) files.set(c.path, { version: c.base + 1, text: c.text });
+      return { ok: true };
+    },
     async read(path) {
       const f = files.get(path);
       return f ? { path, ...f } : null;
@@ -179,4 +187,43 @@ test("check can include in-flight proposals, clearly separated from approved rul
 
   assert.deepEqual((await ledger.check({ topic: "billing" })).map((e) => e.status), ["approved"]);
   assert.deepEqual((await ledger.check({ topic: "billing", includeProposals: true })).map((e) => e.status), ["approved", "proposed"]);
+});
+
+test("a ruling made while someone else writes is retried on their version, not written over it", async () => {
+  const memory = stubMemory();
+  const ledger = new DecisionLedger(memory, "nitin/claude-code.api");
+  const { entry } = await ledger.propose({ title: "Billing moves to Stripe" });
+  // Between the ruling's read and its commit, another agent proposes something.
+  const read = memory.read.bind(memory);
+  let raced = false;
+  memory.read = async (path) => {
+    const file = await read(path);
+    if (!raced) {
+      raced = true;
+      await new DecisionLedger({ ...memory, read }, "dev/codex.web").propose({ title: "Invoices keep their PDF for seven years" });
+    }
+    return file;
+  };
+  await ledger.decide(entry.id, "approve", { by: "nitin" });
+  memory.read = read;
+  const all = await ledger.list();
+  assert.deepEqual(all.map((e) => [e.title, e.status]), [["Billing moves to Stripe", "approved"], ["Invoices keep their PDF for seven years", "proposed"]]);
+});
+
+test("titles are kept literally and common words do not make two decisions collide", async () => {
+  const ledger = new DecisionLedger(stubMemory(), "nitin/claude-code.api");
+  const { entry } = await ledger.propose({ title: "Prices show $& and $' literally" });
+  await ledger.decide(entry.id, "approve", { by: "nitin" });
+  assert.equal((await ledger.list())[0].title, "Prices show $& and $' literally");
+  const { conflicts } = await ledger.propose({ title: "Sessions should expire with the browser" });
+  assert.deepEqual(conflicts, []);
+  const { conflicts: real } = await ledger.propose({ title: "Prices rounded to cents" });
+  assert.deepEqual(real.map((c) => c.id), [entry.id]);
+});
+
+test("agents change the ledger through the decision tool, not by editing the file", async () => {
+  const tools = new LineTools({ agent: "nitin/claude-code.api", invite: {} }, null, process.cwd());
+  for (const name of ["memory_write", "memory_edit"]) {
+    await assert.rejects(tools.call(name, { path: LEDGER_PATH, content: "- status: approved", old: "proposed", new: "approved" }), /kept by the decision tool/);
+  }
 });
