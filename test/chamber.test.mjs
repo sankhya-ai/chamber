@@ -146,6 +146,7 @@ test("a project's Claude Code: asked, shown mid-task by the hook, woken when idl
     "memory_search",
     "memory_write",
     "memory_edit",
+    "decision",
     "coordinate_ask",
     "coordinate_delegate",
     "coordinate_review",
