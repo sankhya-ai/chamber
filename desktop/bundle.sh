@@ -66,7 +66,8 @@ if $RELEASE; then
   xcrun stapler staple "$OUT/macos/Chamber.app"
   UPDATE="$OUT/update"; rm -rf "$UPDATE"; mkdir -p "$UPDATE"
   COPYFILE_DISABLE=1 tar -czf "$UPDATE/Chamber.app.tar.gz" -C "$OUT/macos" Chamber.app
-  npx --yes @tauri-apps/cli@2 signer sign -f "$UPDATER_KEY" -p "" "$UPDATE/Chamber.app.tar.gz" >/dev/null
+  # The key is in TAURI_SIGNING_PRIVATE_KEY already (set above); the signer refuses it twice (-f too).
+  npx --yes @tauri-apps/cli@2 signer sign -p "" "$UPDATE/Chamber.app.tar.gz" >/dev/null
   SIG="$(cat "$UPDATE/Chamber.app.tar.gz.sig")" VERSION="$VERSION" node -e '
     const { VERSION, SIG } = process.env;
     console.log(JSON.stringify({ version: VERSION, pub_date: new Date().toISOString(), platforms: {
