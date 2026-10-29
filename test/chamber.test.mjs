@@ -161,7 +161,14 @@ test("a project's Claude Code: asked, shown mid-task by the hook, woken when idl
   await invite.ready();
   const nitin = await join_(invite, "nitin/root", { kind: "root", answers: true, priority: 10 });
   for (let i = 0; i < 50 && !nitin.roster.some((a) => a.agent === "ashish/claude-code.api"); i++) await sleep(100);
-  assert.match((await server.tool("agents")).text, /nitin\/root \(root, answers\)/);
+  // Ashish's server connects and hears of the join on its own schedule: wait for it there too.
+  let agents = "";
+  for (let i = 0; i < 100; i++) {
+    agents = (await server.tool("agents")).text;
+    if (agents.includes("nitin/root")) break;
+    await sleep(100);
+  }
+  assert.match(agents, /nitin\/root \(root, answers\)/);
 
   // Mid-task: the PostToolUse hook adds it to Claude's context, once.
   const asked = nitin.ask("@ashish", "What type is expires_in?", { timeout: 20000 });
