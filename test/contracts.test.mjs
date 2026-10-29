@@ -198,7 +198,7 @@ test("through the MCP tools: publish notifies every subscriber, and outcomes rea
   assert.match(published, /Notified 1 consumer/);
   assert.equal(beClient.sent.length, 1);
   assert.equal(beClient.sent[0].to, "rohan/codex.web");
-  assert.match(beClient.sent[0].title, /\[contract\] auth-token v2/);
+  assert.equal(beClient.sent[0].title, "Changed: expires_at_epoch_seconds added alongside the ISO field (Auth token response v2)");
   assert.match(beClient.sent[0].text, /action=ack name=auth-token version=2 stance=adapted/);
   assert.match(beClient.sent[0].text, /decision d-20261029-02/);
 
@@ -210,6 +210,7 @@ test("through the MCP tools: publish notifies every subscriber, and outcomes rea
   assert.match(await fe.call("contract", { action: "ack", name: "auth-token", stance: "adapted", note: "web/auth.ts prefers seconds with ISO fallback; both rollout orders pass" }), /producer has been told/);
   assert.equal(feClient.sent.length, 1);
   assert.equal(feClient.sent[0].to, "nitin/claude-code.api");
+  assert.equal(feClient.sent[0].title, "rohan/codex.web updated for Auth token response (v2)");
   assert.match(feClient.sent[0].text, /adapted to auth-token v2/);
   assert.match(feClient.sent[0].text, /both rollout orders pass/);
 
@@ -236,6 +237,7 @@ test("through the MCP tools: an objection requires a reason and reaches the prod
   assert.match(objection, /objection is on the record/);
   assert.equal(feClient.sent.length, 1);
   assert.equal(feClient.sent[0].to, "nitin/claude-code.api");
+  assert.equal(feClient.sent[0].title, "rohan/codex.web blocked: breaks every v1 web client; propose a transition instead (Auth token response v2)");
   assert.match(feClient.sent[0].text, /objects to auth-token v2/);
   assert.match(feClient.sent[0].text, /propose a transition/);
 });
@@ -401,4 +403,54 @@ test("a consumer subscribing while the producer publishes is kept, and told", as
   assert.equal(version, 3);
   assert.deepEqual(notify, ["rohan/codex.web", "dev/codex.jobs"]);
   assert.deepEqual((await producer.get("auth-token")).consumers.map((c) => c.agent), ["rohan/codex.web", "dev/codex.jobs"]);
+});
+
+
+test("contract subjects normalize whitespace, use readable labels and truncate at whole words", async () => {
+  const { tools: be, client } = lineTools("api/claude");
+  await be.call("contract", { action: "register", name: "auth-token", title: "Auth token response" });
+  const consumer = new ContractRegistry(be.memory, "web/codex");
+  await consumer.subscribe("auth-token");
+  await be.call("contract", { action: "publish", name: "auth-token", summary: "  Token expiry\nformat changed\tfor older clients  " });
+  assert.equal(client.sent.at(-1).title, "Changed: Token expiry format changed for older clients (Auth token response v2)");
+  const summary = "Older builds need the old field " + "during the transition ".repeat(20);
+  await be.call("contract", { action: "publish", name: "auth-token", summary });
+  const title = client.sent.at(-1).title;
+  assert.ok(Array.from(title).length <= 180);
+  assert.match(title, /^Changed: Older builds need the old field /);
+  assert.match(title, /… \(Auth token response v3\)$/);
+  const excerpt = title.slice("Changed: ".length, title.indexOf("…"));
+  assert.ok(summary.startsWith(excerpt + " "), "truncate between words, not inside one");
+  assert.ok(client.sent.at(-1).text.includes(summary.trim()), "full summary remains in body");
+});
+
+test("long Unicode contract subjects keep version, stance and intact code points", async () => {
+  const { tools: be, client } = lineTools("api/claude");
+  await be.call("contract", { action: "register", name: "auth-token", title: "🔑".repeat(80) });
+  const { tools: fe, client: feClient } = lineTools("web/" + "🚀".repeat(80));
+  fe.contracts = new ContractRegistry(be.memory, fe.client.agent);
+  await fe.call("contract", { action: "subscribe", name: "auth-token" });
+  await be.call("contract", { action: "publish", name: "auth-token", summary: "🧩".repeat(300) });
+  await fe.call("contract", { action: "ack", name: "auth-token", stance: "object", note: "🛑".repeat(300) });
+  for (const title of [client.sent.at(-1).title, feClient.sent.at(-1).title]) {
+    assert.ok(Array.from(title).length <= 180);
+    assert.match(title, /v2\)$/);
+    assert.ok(title.isWellFormed());
+    assert.doesNotMatch(title, /\[contract\]/);
+  }
+  assert.match(feClient.sent.at(-1).title, / blocked: /);
+  await fe.call("contract", { action: "ack", name: "auth-token", stance: "adapted", note: "Consumer updated; all fixture tests passed" });
+  assert.match(feClient.sent.at(-1).title, / updated for .*\(v2\)$/);
+  assert.ok(feClient.sent.at(-1).title.isWellFormed());
+});
+
+test("a short word before a long identifier doesn't shrink the subject to that word", async () => {
+  const { tools: be, client } = lineTools("api/claude");
+  await be.call("contract", { action: "register", name: "auth-token", title: "Auth token response" });
+  await new ContractRegistry(be.memory, "web/codex").subscribe("auth-token");
+  await be.call("contract", { action: "publish", name: "auth-token", summary: `renamed ${"x".repeat(400)}` });
+  const title = client.sent.at(-1).title;
+  assert.ok(Array.from(title).length <= 180);
+  assert.ok(Array.from(title).length > 150, `kept most of the room: ${title}`);
+  assert.match(title, /^Changed: renamed x+… \(Auth token response v2\)$/);
 });
