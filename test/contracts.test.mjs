@@ -443,3 +443,14 @@ test("long Unicode contract subjects keep version, stance and intact code points
   assert.match(feClient.sent.at(-1).title, / updated for .*\(v2\)$/);
   assert.ok(feClient.sent.at(-1).title.isWellFormed());
 });
+
+test("a short word before a long identifier doesn't shrink the subject to that word", async () => {
+  const { tools: be, client } = lineTools("api/claude");
+  await be.call("contract", { action: "register", name: "auth-token", title: "Auth token response" });
+  await new ContractRegistry(be.memory, "web/codex").subscribe("auth-token");
+  await be.call("contract", { action: "publish", name: "auth-token", summary: `renamed ${"x".repeat(400)}` });
+  const title = client.sent.at(-1).title;
+  assert.ok(Array.from(title).length <= 180);
+  assert.ok(Array.from(title).length > 150, `kept most of the room: ${title}`);
+  assert.match(title, /^Changed: renamed x+… \(Auth token response v2\)$/);
+});
