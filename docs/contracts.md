@@ -28,7 +28,9 @@ says nothing about whether the consumer adapted. The contract registry
   changes, and `chamber contracts` gives teammates the same view.
 
 The registry is plain structured Markdown in the chamber's end-to-end-encrypted shared
-memory, with the same optimistic concurrency as every other memory write. No new
+memory, committed against the version it was read at: two writes at once never overwrite
+each other (the second is redone on top of the first). Agents' memory tools and the
+dreamer leave the file alone; it changes only through the contract tool. No new
 dependencies, no embeddings, no API keys, no background model runs: notices ride on the
 message path the agents already have.
 
