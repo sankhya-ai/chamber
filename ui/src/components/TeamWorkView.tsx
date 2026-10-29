@@ -50,6 +50,9 @@ export function TeamWorkView({
   const [gates, setGates] = useState<Gate[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [manualSyncing, setManualSyncing] = useState(false);
+  // The workspaces panel: running ones first, five shown until asked for all.
+  const [allWorkspaces, setAllWorkspaces] = useState(false);
+  const workspaces = [...(data?.projects ?? [])].sort((x, y) => Number(y.agents.some((a) => a.online)) - Number(x.agents.some((a) => a.online)));
   const [filter, setFilter] = useState<"all" | "needs_you" | "in_progress" | "completed">("all");
 
   const loadData = async (isManual = false) => {
@@ -529,43 +532,32 @@ export function TeamWorkView({
             </Button>
           </div>
 
-          <div className="grid gap-2">
-            {(data?.projects ?? []).map((project) => (
-              <div
-                key={project.path || project.name}
-                className="flex flex-col sm:flex-row sm:items-center justify-between rounded-lg border bg-muted/20 px-3.5 py-2.5 gap-2"
-              >
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-xs text-foreground">
-                      {project.name}
-                    </span>
-                    <span className="size-1.5 rounded-full bg-[#a8cbbb]" />
-                  </div>
-                  {project.path ? (
-                    <p className="font-mono text-[10px] text-muted-foreground truncate max-w-xl">
-                      {project.path}
-                    </p>
-                  ) : null}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {project.agents.map((ag) => {
-                    const kindName = KIND[ag.kind] ?? ag.kind;
-                    return (
-                      <span
-                        key={ag.agent}
-                        className="inline-flex items-center gap-1 rounded bg-background border px-2 py-0.5 text-[10px] font-medium text-foreground shadow-2xs"
-                      >
-                        <span className="size-1.5 rounded-full bg-[#a8cbbb]" />
-                        {kindName}
+          <ul className="divide-y rounded-lg border">
+            {(allWorkspaces ? workspaces : workspaces.slice(0, 5)).map((project) => {
+              const running = project.agents.some((ag) => ag.online);
+              return (
+                <li key={project.path || project.name} className="flex items-center gap-3 px-3 py-2">
+                  <span className={cn("size-1.5 shrink-0 rounded-full", running ? "bg-[#a8cbbb]" : "bg-muted-foreground/30")} />
+                  <span className="truncate text-xs font-semibold text-foreground">{project.name}</span>
+                  {project.path ? <span className="hidden min-w-0 truncate font-mono text-[10px] text-muted-foreground sm:inline" title={project.path}>{project.path.replace(/^\/Users\/[^/]+|^[A-Z]:\\Users\\[^\\]+/i, "~")}</span> : null}
+                  <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
+                    {project.agents.map((ag, i) => (
+                      <span key={ag.agent}>
+                        {i ? " · " : ""}
+                        <span className={cn(ag.online && "font-medium text-[#36634d] dark:text-[#a8cbbb]")}>{KIND[ag.kind] ?? ag.kind}</span>
                       </span>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-
+                    ))}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          {workspaces.length > 5 ? (
+            <button type="button" onClick={() => setAllWorkspaces(!allWorkspaces)} className="text-[11px] text-muted-foreground hover:text-foreground">
+              {allWorkspaces ? "Show fewer" : `Show all ${workspaces.length}`}
+            </button>
+          ) : null}
+          <div>
             {!(data?.projects ?? []).length ? (
               <div className="text-center py-4 text-xs text-muted-foreground">
                 No repositories connected. Click "Add Workspace" to connect Claude Code, Codex, or Antigravity.

@@ -32,6 +32,7 @@ interface Props {
 }
 
 const same = (a: View, b: View) => JSON.stringify(a) === JSON.stringify(b);
+const FOLDERS_SHOWN = 5;
 
 function Row({ active, onClick, children, end }: { active: boolean; onClick: () => void; children: React.ReactNode; end?: React.ReactNode }) {
   return (
@@ -98,6 +99,9 @@ export function Sidebar({
 }: Props) {
   const [naming, setNaming] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  const [showAllFolders, setShowAllFolders] = useState(false);
+  // Folders with an agent running first; past a handful, the rest wait behind "Show more".
+  const projects = [...(data?.projects ?? [])].sort((a, b) => Number(b.agents.some((x) => x.online)) - Number(a.agents.some((x) => x.online)));
   const me = data?.me ?? "";
   const waiting = data ? data.cards.filter((c) => c.unread).length : 0;
   const unread = (v: View) => (data ? inView(data.cards, v, data.projects).filter((c) => c.unread).length : 0);
@@ -260,56 +264,42 @@ export function Sidebar({
             </Row>
           ) : null}
 
-          {(data?.projects ?? []).map((p) => {
+          {(showAllFolders ? projects : projects.slice(0, FOLDERS_SHOWN)).map((p) => {
             const v: View = p.path ? { kind: "project", path: p.path } : { kind: "agent", agent: p.agents[0].agent };
-            const online = p.agents.some((a) => a.online);
+            const running = p.agents.filter((a) => a.online).map((a) => KIND[a.kind] ?? a.kind);
             return (
-              <div
+              <Row
                 key={p.path || p.agents[0].agent}
-                role="button"
+                active={same(view, v)}
                 onClick={() => onView(v)}
-                className={cn(
-                  "group flex flex-col justify-center rounded-md px-2 py-1.5 cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground transition-colors",
-                  same(view, v) && "bg-accent font-medium text-foreground",
-                )}
-              >
-                <div className="flex items-center gap-2 w-full">
-                  <Folder className={cn("size-3.5 shrink-0", online ? "text-online" : "text-muted-foreground/60")} />
-                  <span className="truncate text-[13px] font-medium text-foreground min-w-0 flex-1" title={p.path || p.name}>
-                    {p.path ? (p.name || p.path.split("/").pop() || "project") : (KIND[p.agents[0]?.kind] ?? p.name ?? "agent")}
-                  </span>
-                  {p.path ? (
-                    <button
-                      aria-label="Remove from the chamber"
-                      title="Remove from the chamber"
-                      className="hidden size-4 shrink-0 items-center justify-center rounded text-muted-foreground group-hover:inline-flex hover:text-foreground"
-                      onClick={(e) => (e.stopPropagation(), void act(() => api.removeWorkspace(p.path), `${p.name} is out of the chamber.`))}
-                    >
-                      <X className="size-3" />
-                    </button>
-                  ) : null}
-                </div>
-                <div className="flex items-center gap-1 pl-[22px] mt-1 flex-wrap">
-                  {p.agents.map((a) => {
-                    const kindLabel = KIND[a.kind] ?? a.kind;
-                    return (
-                      <span
-                        key={a.agent}
-                        title={`${kindLabel}${a.online ? " · connected" : " · not running"}`}
-                        className={cn(
-                          "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium tracking-tight",
-                          a.online ? "bg-[#a8cbbb]/20 text-[#36634d] dark:text-[#a8cbbb] font-semibold" : "bg-muted text-muted-foreground"
-                        )}
+                end={
+                  <>
+                    {running.length ? <span className="max-w-20 truncate text-[10px] text-[#36634d] group-hover:hidden dark:text-[#a8cbbb]">{running.join(", ")}</span> : null}
+                    {p.path ? (
+                      <button
+                        aria-label="Remove from the chamber"
+                        title="Remove from the chamber"
+                        className="hidden size-4 shrink-0 items-center justify-center rounded text-muted-foreground group-hover:inline-flex hover:text-foreground"
+                        onClick={(e) => (e.stopPropagation(), void act(() => api.removeWorkspace(p.path), `${p.name} is out of the chamber.`))}
                       >
-                        <span className={cn("size-1.5 rounded-full", a.online ? "bg-[#a8cbbb]" : "bg-muted-foreground/40")} />
-                        {kindLabel}
-                      </span>
-                    );
-                  })}
-                </div>
-              </div>
+                        <X className="size-3" />
+                      </button>
+                    ) : null}
+                  </>
+                }
+              >
+                <Folder className={cn("size-3.5 shrink-0", running.length ? "text-online" : "text-muted-foreground/60")} />
+                <span className="truncate" title={`${p.path || p.name}\n${p.agents.map((a) => `${KIND[a.kind] ?? a.kind}${a.online ? " (running)" : ""}`).join(", ")}`}>
+                  {p.path ? (p.name || p.path.split(/[\\/]/).pop() || "project") : (KIND[p.agents[0]?.kind] ?? p.name ?? "agent")}
+                </span>
+              </Row>
             );
           })}
+          {projects.length > FOLDERS_SHOWN ? (
+            <button type="button" onClick={() => setShowAllFolders(!showAllFolders)} className="px-2 py-1 text-left text-[12px] text-muted-foreground hover:text-foreground">
+              {showAllFolders ? "Show fewer" : `Show ${projects.length - FOLDERS_SHOWN} more`}
+            </button>
+          ) : null}
           {!(data?.projects ?? []).length && !awayActive ? <p className="px-2 text-muted-foreground">Add a project folder to put its coding agents in the chamber.</p> : null}
         </Section>
       </nav>
