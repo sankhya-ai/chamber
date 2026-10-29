@@ -48,15 +48,16 @@ fn start_daemon(app: &tauri::App) -> Option<Child> {
         .ok()
 }
 
-/// Look for a newer Chamber; download and install it, then offer to restart into it.
-/// Quietly does nothing when offline or up to date: the next check tries again.
-async fn update(app: tauri::AppHandle) {
-    let Ok(updater) = app.updater() else { return };
-    let Ok(Some(update)) = updater.check().await else { return };
+/// Look for a newer Chamber; download and install it, then offer to restart into it. Says what it
+/// found: "up-to-date", "installed <version>", or why it couldn't. Offline or up to date, the
+/// background check stays quiet and the next one tries again.
+async fn update(app: tauri::AppHandle) -> Result<String, String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+        return Ok("up-to-date".into());
+    };
     let version = update.version.clone();
-    if update.download_and_install(|_, _| {}, || {}).await.is_err() {
-        return;
-    }
+    update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
     let handle = app.clone();
     app.dialog()
         .message(format!("Chamber {version} is ready. Restart to use it? Your chambers and agents stay as they are."))
@@ -67,6 +68,19 @@ async fn update(app: tauri::AppHandle) {
                 handle.restart();
             }
         });
+    Ok(format!("installed {version}"))
+}
+
+/// Settings → About: the version this app is.
+#[tauri::command]
+fn app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+/// Settings → About → Check for updates: the same check the app runs by itself every few hours.
+#[tauri::command]
+async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
+    update(app).await
 }
 
 fn main() {
@@ -74,12 +88,13 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![app_version, check_for_updates])
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(10)).await;
                 loop {
-                    update(handle.clone()).await;
+                    let _ = update(handle.clone()).await;
                     tokio::time::sleep(UPDATE_EVERY).await;
                 }
             });

@@ -3,20 +3,24 @@ import {
   Check,
   Cloud,
   Copy,
+  Download,
+  Info,
   FolderGit2,
   KeyRound,
   Keyboard,
   Moon,
   Palette,
+  Loader2,
   ShieldCheck,
   Sun,
   User,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, type QuotaInfo } from "@/lib/api";
+import { api, type QuotaInfo, type R2Status, type StorageInfo } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { FileStorageSetup } from "@/components/FileStorageSetup";
 import { KIND, type BoardData } from "@/lib/board";
 import { cn } from "@/lib/utils";
 
@@ -74,19 +78,22 @@ function SettingsOptionRow({
   description,
   children,
   className,
+  stacked = false,
 }: {
   label: React.ReactNode;
   description?: React.ReactNode;
   children?: React.ReactNode;
   className?: string;
+  /** Wide controls (a row of chips) go under the label, not beside it, so neither gets squeezed. */
+  stacked?: boolean;
 }) {
   return (
-    <div className={cn("flex min-h-[50px] items-center justify-between gap-6 px-4 py-3 text-xs", className)}>
+    <div className={cn("flex min-h-[50px] gap-6 px-4 py-3 text-xs", stacked ? "flex-col items-stretch gap-2.5" : "items-center justify-between", className)}>
       <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-foreground">{label}</p>
         {description && <p className="text-[11px] text-muted-foreground mt-0.5 leading-normal">{description}</p>}
       </div>
-      {children && <div className="shrink-0">{children}</div>}
+      {children && <div className={stacked ? "min-w-0" : "shrink-0"}>{children}</div>}
     </div>
   );
 }
@@ -170,7 +177,11 @@ export function SettingsDialog({
   dark?: boolean;
   onToggleTheme?: (dark: boolean) => void;
 }) {
-  const [tab, setTab] = useState<"profile" | "appearance" | "relay" | "agents" | "security" | "shortcuts">("profile");
+  const [tab, setTab] = useState<"profile" | "appearance" | "relay" | "agents" | "security" | "shortcuts" | "about">("profile");
+  // About: the Mac app checks for updates itself (Tauri's updater); run from a clone, git pull updates it.
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [updateState, setUpdateState] = useState<"idle" | "checking" | "current" | "installed" | "error">("idle");
+  const [updateNote, setUpdateNote] = useState("");
   const [statusEmoji, setStatusEmoji] = useState("💬");
   const [statusText, setStatusText] = useState("");
   const [quota, setQuota] = useState<QuotaInfo | null>(null);
@@ -185,6 +196,13 @@ export function SettingsDialog({
   const [alertObligations, setAlertObligations] = useState(true);
   const [defaultHarness, setDefaultHarness] = useState<"claude" | "antigravity" | "codex">("claude");
   const [approvalGateEnabled, setApprovalGateEnabled] = useState(true);
+  // File storage (R2): whether the relay has it, and the admin's flow for turning it on.
+  const [storage, setStorage] = useState<StorageInfo | null>(null);
+  const [storageSetup, setStorageSetup] = useState(false);
+  const [r2, setR2] = useState<R2Status | null>(null);
+  const [r2Checking, setR2Checking] = useState(false);
+  const [storageBusy, setStorageBusy] = useState("");
+  const [storageError, setStorageError] = useState("");
 
   useEffect(() => {
     if (open) {
@@ -196,6 +214,7 @@ export function SettingsDialog({
         () => undefined
       );
       api.quota().then((q) => setQuota(q), () => undefined);
+      api.storage().then(setStorage, () => undefined);
       if (data?.admin) {
         api.invite().then(
           (res: { command: string; code?: string }) => setInviteCommand(res.code || res.command),
@@ -204,6 +223,70 @@ export function SettingsDialog({
       }
     }
   }, [open, data?.admin]);
+
+  const tauri = (window as any).__TAURI__?.core;
+  useEffect(() => {
+    if (open && tauri) tauri.invoke("app_version").then(setAppVersion, () => undefined);
+  }, [open]);
+
+  const checkForUpdates = async () => {
+    setUpdateState("checking");
+    setUpdateNote("");
+    try {
+      const result: string = await tauri.invoke("check_for_updates");
+      if (result.startsWith("installed")) {
+        setUpdateState("installed");
+        setUpdateNote(`Chamber ${result.replace("installed ", "")} is installed. Restart to use it.`);
+      } else {
+        setUpdateState("current");
+        setUpdateNote("You're on the latest version.");
+      }
+    } catch (err: any) {
+      setUpdateState("error");
+      setUpdateNote(`Couldn't check for updates: ${String(err?.message || err)}`);
+    }
+  };
+
+  const checkR2 = () => {
+    setR2Checking(true);
+    setStorageError("");
+    api.r2Status().then(setR2, (err) => setStorageError(err?.message || "Couldn't check your Cloudflare account.")).finally(() => setR2Checking(false));
+  };
+
+  const openStorageSetup = () => {
+    setStorageSetup(true);
+    if (!r2) checkR2();
+  };
+
+  const signInCloudflare = async () => {
+    setStorageBusy("Finish signing in in the browser window that opened…");
+    setStorageError("");
+    try {
+      await api.cloudflareLogin();
+      checkR2();
+    } catch (err: any) {
+      setStorageError(err?.message || "Cloudflare sign-in didn't finish. Try again.");
+    } finally {
+      setStorageBusy("");
+    }
+  };
+
+  // Creating the bucket and redeploying the relay takes up to a minute: show what it's on meanwhile.
+  const enableStorage = async () => {
+    setStorageBusy("Turning on file storage…");
+    setStorageError("");
+    const poll = setInterval(() => api.storage().then((s) => s.progress && setStorageBusy(s.progress), () => undefined), 1000);
+    try {
+      await api.enableStorage();
+      setStorage((s) => (s ? { ...s, files: true } : s));
+      setStorageSetup(false);
+    } catch (err: any) {
+      setStorageError(err?.message || "Couldn't turn on file storage.");
+    } finally {
+      clearInterval(poll);
+      setStorageBusy("");
+    }
+  };
 
   const saveStatus = async (emoji = statusEmoji, text = statusText) => {
     try {
@@ -294,6 +377,18 @@ export function SettingsDialog({
                 >
                   <Keyboard className="size-3.5" /> Shortcuts
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setTab("about")}
+                  className={cn(
+                    "w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors text-left",
+                    tab === "about"
+                      ? "bg-accent text-accent-foreground font-semibold shadow-xs"
+                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                  )}
+                >
+                  <Info className="size-3.5" /> About & Updates
+                </button>
               </div>
 
               {/* Relay & Team Section */}
@@ -382,8 +477,8 @@ export function SettingsDialog({
 
                 <SettingsOptionGroup title="Session">
                   <SettingsOptionRow
-                    label="Log out"
-                    description="Leave this chamber on this Mac and go back to the create-or-join screen. Use your invite code to come back in."
+                    label={`Leave ${data?.chamber?.name || "this chamber"}`}
+                    description="Take this chamber off this Mac; your other chambers stay. Use your invite code to come back in."
                   >
                     <Button
                       size="sm"
@@ -394,7 +489,7 @@ export function SettingsDialog({
                         void api.logout().then(() => onChanged());
                       }}
                     >
-                      {confirmLogout ? "Confirm log out" : "Log out"}
+                      {confirmLogout ? "Confirm leave" : "Leave"}
                     </Button>
                   </SettingsOptionRow>
                 </SettingsOptionGroup>
@@ -427,8 +522,9 @@ export function SettingsDialog({
                   <SettingsOptionRow
                     label="Quick Presets"
                     description="One-click status shortcuts."
+                    stacked
                   >
-                    <div className="flex flex-wrap gap-1.5 justify-end">
+                    <div className="flex flex-wrap gap-1.5">
                       {STATUS_PRESETS.map((p) => (
                         <button
                           key={p.text}
@@ -532,6 +628,63 @@ export function SettingsDialog({
                   </SettingsOptionRow>
                 </SettingsOptionGroup>
 
+                <SettingsOptionGroup title="File Storage">
+                  <SettingsOptionRow
+                    label="Shared files"
+                    description={
+                      storage?.files
+                        ? "Files up to 25 MB, stored encrypted in R2 and deleted after 7 days."
+                        : storage?.admin && storage.cloudflare
+                          ? "Files up to 64 KB. Turn on R2, Cloudflare's file storage, to share files up to 25 MB."
+                          : storage?.admin
+                            ? "Files up to 64 KB."
+                            : "Files up to 64 KB. Your chamber's admin can turn on larger files in their settings."
+                    }
+                  >
+                    {!storage ? (
+                      <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+                    ) : storage.files ? (
+                      <Badge variant="outline" className="gap-1.5 border-[#a8cbbb]/40 bg-[#a8cbbb]/15 text-[#36634d] dark:text-[#a8cbbb] font-medium">
+                        <span className="size-1.5 rounded-full bg-[#a8cbbb]" /> Up to 25 MB
+                      </Badge>
+                    ) : storage.admin && storage.cloudflare && !storageSetup ? (
+                      <Button size="sm" variant="outline" onClick={openStorageSetup} className="h-8 text-xs">
+                        Set up
+                      </Button>
+                    ) : (
+                      <Badge variant="outline" className="text-xs text-muted-foreground">Up to 64 KB</Badge>
+                    )}
+                  </SettingsOptionRow>
+                  {storageSetup && !storage?.files ? (
+                    <div className="space-y-3 px-4 py-3.5">
+                      {storageError ? <div className="whitespace-pre-wrap break-words rounded-lg border border-destructive/30 bg-destructive/10 p-2.5 text-xs text-destructive">{storageError}</div> : null}
+                      {r2 && !r2.authenticated ? (
+                        <div className="flex items-center justify-between gap-4 rounded-lg border p-3 text-xs">
+                          <span className="text-muted-foreground">Sign in to the Cloudflare account your relay runs in.</span>
+                          <Button size="sm" onClick={signInCloudflare} disabled={Boolean(storageBusy)} className="h-8 shrink-0 text-xs">
+                            Sign in with Cloudflare
+                          </Button>
+                        </div>
+                      ) : (
+                        <FileStorageSetup status={r2} checking={r2Checking} onCheck={checkR2} />
+                      )}
+                      {storageBusy ? (
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Loader2 className="size-3.5 animate-spin" /> {storageBusy}
+                        </div>
+                      ) : null}
+                      <div className="flex justify-end gap-2">
+                        <Button size="sm" variant="ghost" onClick={() => setStorageSetup(false)} disabled={Boolean(storageBusy)} className="h-8 text-xs">
+                          Cancel
+                        </Button>
+                        <Button size="sm" onClick={enableStorage} disabled={!r2?.enabled || Boolean(storageBusy)} className="h-8 text-xs">
+                          Turn on file storage
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                </SettingsOptionGroup>
+
                 <SettingsOptionGroup title="Quotas & Usage">
                   <SettingsOptionRow
                     label="Daily Durable Object Requests"
@@ -549,6 +702,7 @@ export function SettingsDialog({
                       </span>
                     </div>
                   </SettingsOptionRow>
+                  {storage?.files ? (
                   <SettingsOptionRow
                     label="R2 Encrypted Storage"
                     description={`${quota ? Math.round(quota.r2StorageBytes / (1024 * 1024)) : 0} MB / 10 GB storage used`}
@@ -562,6 +716,7 @@ export function SettingsDialog({
                       </span>
                     </div>
                   </SettingsOptionRow>
+                  ) : null}
                 </SettingsOptionGroup>
               </div>
             )}
@@ -707,6 +862,38 @@ export function SettingsDialog({
                       </Button>
                     </div>
                   </SettingsOptionRow>
+                </SettingsOptionGroup>
+              </div>
+            )}
+
+            {tab === "about" && (
+              <div className="space-y-5">
+                <SettingsSectionHeader title="About & Updates" description="Which Chamber this is, and getting the newest one." />
+
+                <SettingsOptionGroup title="Chamber">
+                  <SettingsOptionRow label="Version" description={tauri ? "The Mac app checks for updates by itself shortly after it opens, then every few hours." : "Running from the Chamber repository."}>
+                    <span className="font-mono text-xs text-muted-foreground bg-muted/50 px-2 py-0.5 rounded border">{appVersion ? `v${appVersion}` : tauri ? "…" : "source"}</span>
+                  </SettingsOptionRow>
+                  {tauri ? (
+                    <SettingsOptionRow
+                      label="Updates"
+                      description={updateNote || "Download and install the newest Chamber now. You choose when to restart."}
+                    >
+                      <Button size="sm" variant="outline" onClick={checkForUpdates} disabled={updateState === "checking"} className="h-8 gap-1.5 text-xs">
+                        {updateState === "checking" ? <Loader2 className="size-3 animate-spin" /> : updateState === "current" ? <Check className="size-3" /> : <Download className="size-3" />}
+                        {updateState === "checking" ? "Checking…" : "Check for updates"}
+                      </Button>
+                    </SettingsOptionRow>
+                  ) : (
+                    <SettingsOptionRow
+                      label="Updates"
+                      description={
+                        <>
+                          In the folder you run Chamber from: <code className="font-mono">git pull</code>, then <code className="font-mono">npm start</code> again.
+                        </>
+                      }
+                    />
+                  )}
                 </SettingsOptionGroup>
               </div>
             )}

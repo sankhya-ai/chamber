@@ -217,7 +217,7 @@ export function App() {
   const here = addressFor(route.view);
 
   if (data && !data.configured) {
-    return <OnboardingView onConfigured={refresh} />;
+    return <OnboardingView onConfigured={refresh} chambers={data.chambers} adding={data.adding} />;
   }
 
   return (

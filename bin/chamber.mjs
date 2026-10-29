@@ -37,7 +37,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { LineClient } from "../lib/client.mjs";
-import { HOME, Inbox, isAdmin, loadConfig, logout, markAdmin, NOT_A_NAME, rename, saveConfig } from "../lib/inbox.mjs";
+import { activeChamber, HOME, homeFor, Inbox, isAdmin, listChambers, loadConfig, logout, markAdmin, newChamberHome, NOT_A_NAME, rename, ROOT, saveConfig, setActiveChamber, useChamber } from "../lib/inbox.mjs";
 import { Invite, LineError } from "../lib/protocol.mjs";
 
 const [command, ...rest] = process.argv.slice(2);
@@ -68,8 +68,20 @@ const { values: opts, positionals } = parseArgs({
     status: { type: "string" },
     token: { type: "string" },
     "chamber-hook": { type: "boolean" },
+    home: { type: "string" },
+    chamber: { type: "string" },
+    "no-files": { type: "boolean" },
   },
 });
+
+// Which chamber this command is for: the one it names (--home, as agents' commands do), else an
+// agent's command from before there were several is for the first, else the one picked last.
+useChamber(opts.home ? resolve(opts.home) : opts.agent && !["setup", "remove"].includes(command) ? ROOT : activeChamber());
+
+/** A chamber being created gets a folder of its own when this machine is in one already. */
+function startNewChamber() {
+  return opts.home ? HOME : useChamber(newChamberHome());
+}
 
 function needConfig() {
   const config = loadConfig();
@@ -104,7 +116,7 @@ const APP = resolve(fileURLToPath(import.meta.url), "../..");
 async function update(relay) {
   let installed = null;
   try {
-    installed = realpathSync(join(HOME, "app"));
+    installed = realpathSync(join(ROOT, "app"));
   } catch {}
   if (realpathSync(APP) !== installed) return null;
   const list = await fetch(`${relay}/client/files`).catch(() => null);
@@ -145,11 +157,15 @@ async function main() {
       const { deployRelay } = await import("../lib/deploy.mjs");
       const owner = (opts.as || opts.name || defaultOwner()).toLowerCase();
       console.log(`Setting up Chamber Relay on Cloudflare for @${owner}...`);
+      startNewChamber();
       const res = await deployRelay({
         owner,
+        name: opts.chamber,
         projectPath: positionals[0] ? resolve(positionals[0]) : null,
+        storage: !opts["no-files"],
         onProgress: (msg) => console.log(msg),
       });
+      setActiveChamber(HOME);
       console.log(`\n\x1b[1;32m✔ Chamber deployed and initialized!\x1b[0m`);
       console.log(`Relay: ${res.relay}`);
       console.log(`You are the admin: @${res.owner}`);
@@ -169,8 +185,10 @@ async function main() {
       // A relay from the Deploy button is unclaimed: the first chamber made on it claims it
       // (its admin key, this chamber only). A relay set up by create.sh is already private.
       const claimed = await claimRelay(invite);
-      saveConfig(claimed.pass ? invite.withPass(claimed.pass) : invite, owner);
+      startNewChamber();
+      saveConfig(claimed.pass ? invite.withPass(claimed.pass) : invite, owner, opts.chamber);
       markAdmin(invite, claimed.key ? { adminPublic: claimed.key.public, adminPrivate: claimed.key.private } : {});
+      setActiveChamber(HOME);
       console.log(`New chamber on ${invite.relay}; you are its admin, as ${owner}.${claimed.pass ? " The relay is now private to it." : ""}`);
       console.log("\nInvite each teammate with their own command:  chamber invite   (or Invite on the board)");
       if (!opts["no-setup"]) {
@@ -220,8 +238,27 @@ async function main() {
     case "join": {
       if (!positionals[0]) throw new LineError("chamber join <invite> [--as <name>]");
       const owner = (opts.as || defaultOwner()).toLowerCase();
-      saveConfig(Invite.fromInput(positionals.join(" ")), owner);
+      const invite = Invite.fromInput(positionals.join(" "));
+      if (!opts.home) useChamber(homeFor(invite));
+      saveConfig(invite, owner, opts.chamber);
+      setActiveChamber(HOME);
       console.log(`You are in the chamber as ${owner}${opts.as ? "" : " (change it anytime: chamber name <new>)"}.`);
+      return 0;
+    }
+    case "chambers": {
+      // Every chamber this machine is in; the one marked * is the one commands use.
+      const chambers = listChambers();
+      if (!chambers.length) console.log("Not in a chamber yet: run chamber start to create or join one.");
+      for (const c of chambers) console.log(`${c.home === HOME ? "*" : " "} ${c.name.padEnd(24)} ${c.relay}  (${c.owner}${c.admin ? ", admin" : ""})  id: ${c.id}`);
+      return 0;
+    }
+    case "switch": {
+      const want = positionals.join(" ").trim().toLowerCase();
+      const chambers = listChambers();
+      const found = chambers.find((c) => c.id === want) || chambers.find((c) => c.name.toLowerCase() === want);
+      if (!found) throw new LineError(`chamber switch <name or id>: one of ${chambers.map((c) => c.name).join(", ") || "(none yet)"}`);
+      setActiveChamber(found.home);
+      console.log(`Now in ${found.name} (${found.relay}). The app switches the next time it opens; agents stay in the chamber their folder was added to.`);
       return 0;
     }
     case "logout": {

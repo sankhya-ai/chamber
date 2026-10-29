@@ -70,7 +70,7 @@ const status = (lineId, auth = SECRET) => fetch(`${relay}/v1/hosted/status?line=
 const billing = (body, auth = SECRET) => fetch(`${relay}/v1/hosted/billing`, { method: "POST", headers: { authorization: `Bearer ${auth}`, "content-type": "application/json" }, body: JSON.stringify(body) });
 
 test("many chambers on one hosted relay, each with its own admin, a trial, then seats", async () => {
-  assert.deepEqual(await (await fetch(`${relay}/v1/relay`)).json(), { claimed: false, hosted: true, relay: 6 });
+  assert.deepEqual(await (await fetch(`${relay}/v1/relay`)).json(), { claimed: false, hosted: true, files: true, relay: 6 });
 
   // Two teams register; each is its own chamber with its own admin key.
   const a = await Invite.create(relay).ready();

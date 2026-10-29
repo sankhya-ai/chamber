@@ -104,7 +104,8 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/") return request.headers.get("accept")?.includes("text/html") ? landing(url, await relayConfig(env)) : new Response("chamber relay\n");
     if (url.pathname === "/v1/claim" && request.method === "POST") return hosted(env) ? register(request, env) : claim(request, env);
-    if (url.pathname === "/v1/relay") return json(hosted(env) ? { claimed: false, hosted: true, relay: RELAY_VERSION } : { claimed: (await relayConfig(env)).claimed, relay: RELAY_VERSION });
+    // `files`: whether this relay can hold files too big for a message (the optional R2 binding).
+    if (url.pathname === "/v1/relay") return json(hosted(env) ? { claimed: false, hosted: true, files: Boolean(env.BLOBS), relay: RELAY_VERSION } : { claimed: (await relayConfig(env)).claimed, files: Boolean(env.BLOBS), relay: RELAY_VERSION });
     if (url.pathname.startsWith("/v1/hosted/")) return hostedApi(request, env, url);
     const served = install(url);
     if (served) return served;

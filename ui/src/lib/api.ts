@@ -1,6 +1,6 @@
 // The board's API, served by `chamber board` on this machine.
 
-import type { BoardData, Talk } from "./board.ts";
+import type { BoardData, ChamberSummary, Talk } from "./board.ts";
 
 /** A team's place on Chamber Cloud: its trial or plan, and (for the admin) the signed billing link. */
 export interface CloudPlan {
@@ -122,6 +122,11 @@ export const api = {
   pickFolder: () => post<{ path?: string; cancelled?: boolean }>("/api/board/workspaces/pick"),
   removeWorkspace: (path: string) => post<{ output: string }>("/api/board/workspaces/remove", { path }),
   logout: () => post<{ ok: boolean }>("/api/board/logout", {}),
+  chambers: () => request<{ chambers: ChamberSummary[] }>("/api/board/chambers"),
+  switchChamber: (id: string) => post<{ ok: boolean }>("/api/board/chambers/switch", { id }),
+  addChamber: () => post<{ ok: boolean }>("/api/board/chambers/add"),
+  cancelAddChamber: () => post<{ ok: boolean }>("/api/board/chambers/cancel-add"),
+  renameChamber: (name: string) => post<{ ok: boolean }>("/api/board/chambers/rename", { name }),
   invite: () => request<{ command: string; code?: string }>("/api/board/invite"),
   memory: () => request<{ files: { path: string; version: number; author: string; ts: number }[] }>("/api/board/memory"),
   memoryFile: (path: string, version = 0) => request<{ path: string; version: number; text: string | null }>(`/api/board/memory/file?path=${encodeURIComponent(path)}${version ? `&version=${version}` : ""}`),
@@ -156,10 +161,10 @@ export const api = {
   rejectCoordination: (id: string, reason?: string) =>
     post<{ task: CoordinationTask }>("/api/board/coordination", { action: "reject", id, reason }),
   quota: () => request<QuotaInfo>("/api/board/quota"),
-  joinOnboarding: (invite: string, as?: string, project?: string) =>
-    post<{ ok: boolean; owner: string; relay: string }>("/api/board/onboarding/join", { invite, as, project }),
-  newOnboarding: (relay: string, as?: string, project?: string) =>
-    post<{ ok: boolean; owner: string; relay: string; admin?: boolean }>("/api/board/onboarding/new", { relay, as, project }),
+  joinOnboarding: (invite: string, as?: string, project?: string, name?: string) =>
+    post<{ ok: boolean; owner: string; relay: string }>("/api/board/onboarding/join", { invite, as, project, name }),
+  newOnboarding: (relay: string, as?: string, project?: string, name?: string) =>
+    post<{ ok: boolean; owner: string; relay: string; admin?: boolean }>("/api/board/onboarding/new", { relay, as, project, name }),
   cloudflareAuth: () =>
     request<{ authenticated: boolean; account: string | null }>("/api/board/onboarding/cloudflare-auth"),
   plan: () => request<{ plan: CloudPlan | null }>("/api/board/plan"),
@@ -171,8 +176,12 @@ export const api = {
   wakeRun: (id: string) => request<{ events: any[] }>(`/api/board/wake/${id}`),
   cloudflareProgress: () => request<{ running: boolean; progress: string }>("/api/board/onboarding/cloudflare-progress"),
   cloudflareCancel: () => post<{ ok: boolean }>("/api/board/onboarding/cloudflare-cancel"),
-  cloudflareSetup: (as?: string, project?: string) =>
-    post<{ ok: boolean; relay: string; owner: string; inviteCommand: string }>("/api/board/onboarding/cloudflare-setup", { as, project }),
+  cloudflareSetup: (as?: string, project?: string, storage = true, name?: string) =>
+    post<{ ok: boolean; relay: string; owner: string; inviteCommand: string; files: boolean }>("/api/board/onboarding/cloudflare-setup", { as, project, storage, name }),
+  cloudflareLogin: () => post<{ authenticated: boolean; account: string | null }>("/api/board/onboarding/cloudflare-login"),
+  r2Status: () => request<R2Status>("/api/board/onboarding/r2-status"),
+  storage: () => request<StorageInfo>("/api/board/storage"),
+  enableStorage: () => post<{ ok: boolean; files: boolean }>("/api/board/storage/enable"),
   detectHarnesses: () =>
     request<{ harnesses: Record<string, boolean>; project: string }>("/api/board/detect"),
   toggleReaction: (messageId: string, emoji: string) =>
@@ -182,6 +191,23 @@ export const api = {
   setUserStatus: (emoji: string, text: string) =>
     post<{ emoji: string; text: string }>("/api/board/user_status", { emoji, text }),
 };
+
+/** The signed-in Cloudflare account's R2: off until its owner turns it on in the dashboard. */
+export interface R2Status {
+  authenticated: boolean;
+  enabled: boolean;
+  bucket: boolean;
+  dashboard: string;
+  reason?: string;
+}
+
+/** Whether the chamber's relay holds files up to 25 MB (null: an older relay that doesn't say). */
+export interface StorageInfo {
+  files: boolean | null;
+  cloudflare: boolean;
+  admin: boolean;
+  progress: string;
+}
 
 export interface CoordinationTask {
   id: string;

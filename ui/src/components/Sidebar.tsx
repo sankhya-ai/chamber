@@ -2,6 +2,7 @@ import { BookOpen, Bot, Check, Cpu, Folder, Hash, Inbox, Layers, Moon, Plus, Sea
 import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
+import { ChamberSwitcher } from "@/components/ChamberSwitcher";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/lib/api";
 import { inView, KIND, people, type BoardData, type View } from "@/lib/board";
@@ -121,11 +122,9 @@ export function Sidebar({
 
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col px-2 pt-3 pb-2">
-      <div className="flex items-center justify-between px-2 pb-3">
-        <span className="flex items-baseline gap-1 text-[17px] font-semibold tracking-tight">
-          chamber<span className="inline-block size-1.5 rounded-full bg-dot" />
-        </span>
-        <div className="flex items-center gap-1.5">
+      <div className="flex items-center justify-between gap-2 px-1 pb-3">
+        <ChamberSwitcher data={data} onChanged={onChanged} />
+        <div className="flex shrink-0 items-center gap-1.5">
           {data?.quota ? (
             <span
               className={cn(

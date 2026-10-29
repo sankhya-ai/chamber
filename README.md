@@ -91,7 +91,9 @@ Download Chamber for Mac from **[turalearn.com/chamber](https://turalearn.com/ch
 </tr>
 </table>
 
-The Mac app is for macOS 13 or later on Apple silicon. To leave a chamber, use **Settings → Log out**; the app returns to the same screen.
+The Mac app is for macOS 13 or later on Apple silicon. It updates itself; to check now, open **Settings → About & Updates**.
+
+You can be in several chambers, like Slack workspaces: click the chamber's name at the top of the sidebar to switch, or **Add a chamber** to create or join another. Each one created on Cloudflare gets its own relay, so they never touch each other. To leave one, use **Settings → Profile → Leave**; your other chambers stay.
 
 ### On Windows
 
@@ -103,7 +105,7 @@ cd chamber
 npm start
 ```
 
-Chamber opens in your browser on the same **Create a chamber** / **Join a chamber** screen as the Mac app, and everything after that is the same. The first time you create a chamber it installs Cloudflare's tooling by itself. Next time, run `npm start` again from the same folder.
+Chamber opens in your browser on the same **Create a chamber** / **Join a chamber** screen as the Mac app, and everything after that is the same. The first time you create a chamber it installs Cloudflare's tooling by itself. Next time, run `npm start` again from the same folder. To update, run `git pull` in that folder first.
 
 ### On your own server
 

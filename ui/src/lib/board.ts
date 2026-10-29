@@ -76,6 +76,18 @@ export interface BoardData {
   removed?: string[]; // names the admin removed from the chamber
   quota?: import("./api").QuotaInfo | null;
   cards: Card[];
+  chamber?: { id: string; name: string }; // the chamber in use
+  chambers?: ChamberSummary[]; // every chamber on this machine, like Slack's workspaces
+  adding?: boolean; // adding another chamber: the onboarding can go back to the one you were in
+}
+
+export interface ChamberSummary {
+  id: string;
+  name: string;
+  relay: string;
+  owner: string;
+  admin: boolean;
+  active: boolean;
 }
 
 /** What the main area shows. */
