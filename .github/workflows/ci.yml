@@ -53,7 +53,9 @@ jobs:
       # The app ships Node beside itself; cargo check only needs a file where bundle.sh puts it.
       - name: Stand in for the bundled Node
         working-directory: ./desktop/src-tauri
-        run: mkdir -p binaries && cp "$(command -v node)" "binaries/node-$(rustc -vV | sed -n 's/^host: //p')"
+        run: |
+          mkdir -p binaries
+          cp "$(command -v node)" "binaries/node-$(rustc -vV | sed -n 's/^host: //p')"
 
       - name: Check Desktop Tauri Crate
         working-directory: ./desktop/src-tauri
