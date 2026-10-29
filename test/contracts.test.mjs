@@ -132,7 +132,7 @@ test("a new version makes every consumer outstanding again; session start lists 
   await producer.register({ name: "auth-token", title: "Auth token response" });
   const consumer = new ContractRegistry(memory, "rohan/codex.web");
   await consumer.subscribe("auth-token");
-  await consumer.ack("auth-token", { stance: "adapted", note: "v1 done" });
+  await consumer.ack("auth-token", { stance: "adapted", note: "v1 consumer migrated; unit tests green" });
 
   assert.deepEqual(await producer.pendingFor("rohan/codex.web"), []);
   assert.equal(await producer.bootstrapFor("rohan/codex.web"), "");
@@ -251,6 +251,132 @@ test("a proposal affecting a registered contract points at the publish loop", as
   const proposed = await be.call("decision", { action: "propose", title: "Add epoch seconds to the auth token response", affects: "api/auth/schema.py, contracts/auth-token" });
   assert.match(proposed, /auth-token has 1 subscribed consumer \(rohan\/codex\.web\)/);
   assert.match(proposed, /contract action=publish name=auth-token/);
+});
+
+// ---- Hardening: the five gaps found by running the registry with three independent roles ----
+
+test("adapted needs a substantive evidence note; it is recorded as a claim, and seen/object are unaffected", async () => {
+  const memory = stubMemory();
+  const producer = new ContractRegistry(memory, "nitin/claude-code.api");
+  await producer.register({ name: "auth-token", title: "Auth token response" });
+  const consumer = new ContractRegistry(memory, "rohan/codex.web");
+  await consumer.subscribe("auth-token");
+  for (const note of [undefined, "", "   ", "done", "ok tests pass"]) {
+    await assert.rejects(() => consumer.ack("auth-token", { stance: "adapted", note }), /evidence note of at least 20/);
+  }
+  assert.equal((await producer.status("auth-token")).consumers[0].state, "outstanding", "a rejected ack records nothing");
+  await consumer.ack("auth-token", { stance: "seen" }); // receipt needs no evidence
+  await consumer.ack("auth-token", { stance: "adapted", note: "auth.mjs prefers epoch seconds; node --test 10/10" });
+  assert.equal((await producer.status("auth-token")).consumers[0].state, "adapted");
+});
+
+test("seen keeps the session-start reminder until the consumer adapts or objects", async () => {
+  const memory = stubMemory();
+  const producer = new ContractRegistry(memory, "nitin/claude-code.api");
+  await producer.register({ name: "auth-token", title: "Auth token response" });
+  const consumer = new ContractRegistry(memory, "rohan/codex.web");
+  await consumer.subscribe("auth-token");
+  await producer.publish({ name: "auth-token", summary: "epoch seconds added" });
+
+  await consumer.ack("auth-token", { stance: "seen" });
+  assert.equal((await producer.status("auth-token")).consumers[0].state, "seen", "status still says seen");
+  const nudge = await producer.bootstrapFor("rohan/codex.web");
+  assert.match(nudge, /auth-token v2/);
+  assert.match(nudge, /acked seen: not adapted yet/);
+
+  await consumer.ack("auth-token", { stance: "adapted", note: "auth.mjs prefers epoch seconds; node --test 10/10" });
+  assert.equal(await producer.bootstrapFor("rohan/codex.web"), "");
+
+  // an objection also resolves the reminder for the consumer, and surfaces to the producer
+  const jobs = new ContractRegistry(memory, "dev/codex.jobs");
+  await jobs.subscribe("auth-token");
+  await jobs.ack("auth-token", { stance: "seen" });
+  await jobs.ack("auth-token", { stance: "object", note: "quarterly deploy cannot take this" });
+  assert.equal(await jobs.bootstrapFor("dev/codex.jobs"), "");
+  assert.match(await producer.bootstrapFor("nitin/claude-code.api"), /OPEN OBJECTION on auth-token v2 from dev\/codex\.jobs: quarterly deploy/);
+});
+
+test("publish with nobody subscribed warns that undeclared dependents are invisible", async () => {
+  const { tools: be, client } = lineTools("nitin/claude-code.api");
+  await be.call("contract", { action: "register", name: "auth-token", title: "Auth token response" });
+  const out = await be.call("contract", { action: "publish", name: "auth-token", summary: "epoch seconds added" });
+  assert.match(out, /Published auth-token v2/);
+  assert.match(out, /WARNING: no consumers are subscribed/);
+  assert.match(out, /cannot see who else depends/);
+  assert.match(out, /contract action=subscribe name=auth-token/);
+  assert.equal(client.sent.length, 0);
+  assert.match(await be.call("contract", { action: "status", name: "auth-token" }), /cannot see undeclared dependents/);
+});
+
+test("an open objection is warned about on the next publish, passed to consumers, and does not block it", async () => {
+  const { tools: be, client: beClient } = lineTools("nitin/claude-code.api");
+  await be.call("contract", { action: "register", name: "auth-token", title: "Auth token response" });
+  const mk = (agent) => {
+    const t = lineTools(agent);
+    t.tools.memory = be.memory;
+    t.tools.contracts = new ContractRegistry(be.memory, agent);
+    return t;
+  };
+  const jobs = mk("dev/codex.jobs");
+  const web = mk("rohan/codex.web");
+  await jobs.tools.call("contract", { action: "subscribe", name: "auth-token" });
+  await web.tools.call("contract", { action: "subscribe", name: "auth-token" });
+  await be.call("contract", { action: "publish", name: "auth-token", summary: "v2 additive" });
+  await jobs.tools.call("contract", { action: "ack", name: "auth-token", stance: "object", note: "quarterly deploy cannot take this" });
+
+  assert.match(await be.call("contract", { action: "status", name: "auth-token" }), /OPEN OBJECTION: dev\/codex\.jobs \(v2\): quarterly deploy/);
+  beClient.sent.length = 0;
+  const out = await be.call("contract", { action: "publish", name: "auth-token", summary: "v3 removes ISO field" });
+  assert.match(out, /Published auth-token v3/, "not a gate");
+  assert.match(out, /WARNING: 1 open objection not resolved by this publish: dev\/codex\.jobs \(v2\): quarterly deploy/);
+  assert.equal(beClient.sent.length, 2);
+  for (const m of beClient.sent) assert.match(m.text, /Open objection on this contract: dev\/codex\.jobs/);
+
+  // once the objector supersedes it with an adapted ack at the newer version, the warning clears
+  await jobs.tools.call("contract", { action: "ack", name: "auth-token", stance: "adapted", note: "jobs client reads new field; node --test 6/6" });
+  assert.doesNotMatch(await be.call("contract", { action: "publish", name: "auth-token", summary: "v4 cleanup" }), /open objection/i);
+});
+
+test("context_package includes registry contracts by name or by matching words; unrelated ones stay out", async () => {
+  const { tools: be } = lineTools("nitin/claude-code.api");
+  await be.call("contract", { action: "register", name: "auth-token", title: "Auth token response", summary: "expires_at ISO" });
+  await be.call("contract", { action: "register", name: "billing-webhook", title: "Billing webhook payload" });
+  const web = lineTools("rohan/codex.web");
+  web.tools.memory = be.memory;
+  web.tools.contracts = new ContractRegistry(be.memory, "rohan/codex.web");
+  await web.tools.call("contract", { action: "subscribe", name: "auth-token" });
+  await be.call("contract", { action: "publish", name: "auth-token", summary: "epoch seconds added" });
+  await web.tools.call("contract", { action: "ack", name: "auth-token", stance: "object", note: "cannot ship this quarter" });
+
+  const named = await web.tools.call("context_package", { contracts: ["auth-token"] });
+  assert.match(named, /contract auth-token\*\* v2: epoch seconds added/);
+  assert.match(named, /your standing: object/);
+  assert.match(named, /Open objection from rohan\/codex\.web: cannot ship this quarter/);
+  assert.match(named, /1 subscribed consumer/);
+  assert.doesNotMatch(named, /billing-webhook/);
+
+  const byQuery = await web.tools.call("context_package", { query: "billing" });
+  assert.match(byQuery, /contract billing-webhook/);
+  assert.doesNotMatch(byQuery, /contract auth-token/);
+  assert.match(byQuery, /Compiled Context Package \(1 source-backed facts\)/);
+});
+
+test("installer packaging: every relative import of a shipped client file is itself shipped", async () => {
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const install = readFileSync(new URL("../relay/src/install.js", import.meta.url), "utf8");
+  const shipped = new Set([...install.matchAll(/^\s+"((?:lib|bin)\/[^"]+)":/gm)].map((m) => m[1]));
+  assert.ok(shipped.has("lib/contracts.mjs") && shipped.has("lib/decisions.mjs"));
+  for (const file of shipped) {
+    const src = readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+    for (const m of src.matchAll(/(?:from\s+|import\()\s*"(\.{1,2}\/[^"]+\.mjs)"/g)) {
+      const target = new URL(m[1], new URL(`../${file}`, import.meta.url)).pathname.replace(/^.*\/chamber\/|^.*?\/(lib|bin)\//, (x, d) => (d ? `${d}/` : ""));
+      const rel = target.startsWith("lib/") || target.startsWith("bin/") ? target : null;
+      assert.ok(rel ? shipped.has(rel) : true, `${file} imports ${m[1]} which the installer does not ship`);
+    }
+  }
+  // and every lib file is either shipped or deliberately server/desktop-only
+  const libs = readdirSync(new URL("../lib", import.meta.url)).filter((f) => f.endsWith(".mjs")).map((f) => `lib/${f}`);
+  assert.ok(libs.filter((f) => !shipped.has(f)).length <= 2, "unshipped lib files grew");
 });
 
 test("a consumer subscribing while the producer publishes is kept, and told", async () => {

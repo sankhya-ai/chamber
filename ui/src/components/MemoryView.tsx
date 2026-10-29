@@ -1,6 +1,7 @@
 import { ChevronRight, FileText, Folder, Moon, Search, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { ContractsView } from "@/components/ContractsView";
 import { DecisionsView } from "@/components/DecisionsView";
 import { Markdown } from "@/components/Markdown";
 import { Button } from "@/components/ui/button";
@@ -10,7 +11,7 @@ import { cn } from "@/lib/utils";
 
 // The team's memory (after supermemory's memoryrepo): files, history, and dreams.
 
-type Tab = "files" | "decisions" | "history" | "dreams";
+type Tab = "files" | "decisions" | "contracts" | "history" | "dreams";
 type FileRow = { path: string; version: number; author: string; ts: number };
 
 /** Paths into a folder tree: folders first, then files, alphabetical. */
@@ -346,19 +347,19 @@ function Dreams() {
   );
 }
 
-/** Memory: the team's shared, linked notes. Files · Decisions · History · Dreams. */
+/** Memory: the team's shared, linked notes. Files · Decisions · Contracts · History · Dreams. */
 export function MemoryView({ onTalk }: { onTalk: (id: string) => void }) {
   const [tab, setTab] = useState<Tab>("files");
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-1 border-b px-3">
-        {(["files", "decisions", "history"] as const).map((t) => (
+        {(["files", "decisions", "contracts", "history"] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)} className={cn("h-7 rounded-md px-3 capitalize text-muted-foreground hover:text-foreground", tab === t && "bg-accent text-foreground")}>
             {t}
           </button>
         ))}
       </div>
-      {tab === "files" ? <Files onTalk={onTalk} /> : tab === "decisions" ? <DecisionsView /> : tab === "history" ? <History /> : <Dreams />}
+      {tab === "files" ? <Files onTalk={onTalk} /> : tab === "decisions" ? <DecisionsView /> : tab === "contracts" ? <ContractsView /> : tab === "history" ? <History /> : <Dreams />}
     </div>
   );
 }

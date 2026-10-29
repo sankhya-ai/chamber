@@ -121,6 +121,19 @@ export interface Decision {
   reason?: string;
 }
 
+/** A contract in the registry (lib/contracts.mjs), with each consumer's standing on the current version. */
+export interface Contract {
+  name: string;
+  title: string;
+  version: number;
+  summary: string;
+  producer: string;
+  updated: string;
+  decision: string;
+  consumers: { agent: string; state: "outstanding" | "seen" | "adapted" | "object"; note: string; date: string; lastVersion: number }[];
+  objections: { agent: string; version: number; note: string; date: string }[];
+}
+
 export interface AttachedFile {
   name: string;
   data: string; // base64
@@ -155,6 +168,7 @@ export const api = {
   memorySearch: (q: string) => request<{ hits: { path: string; line: number; text: string }[] }>(`/api/board/memory/search?q=${encodeURIComponent(q)}`),
   decisions: () => request<{ entries: Decision[] }>("/api/board/decisions"),
   decide: (id: string, outcome: "approve" | "reject", reason = "") => post<{ entry: Decision }>("/api/board/decisions/decide", { id, outcome, reason }),
+  contracts: () => request<{ contracts: Contract[] }>("/api/board/contracts"),
   dreams: () => request<{ dreams: Dream[]; running: { started: number; log: { kind: string; text: string; ts: number }[] } | null }>("/api/board/memory/dreams"),
   dream: () => post<{ started: boolean }>("/api/board/memory/dream"),
   settings: () => request<{ hasKey: boolean; dreamModel: string; lastDream: number }>("/api/board/settings"),

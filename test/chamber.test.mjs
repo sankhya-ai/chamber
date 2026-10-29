@@ -257,8 +257,15 @@ test("contract changes: publish reaches a working consumer mid-task and a new se
     if (started.stdout.includes("auth-token v2")) break;
     await sleep(100);
   }
-  assert.match(started.stdout, /Contract changes you have not acknowledged/);
+  assert.match(started.stdout, /Contract items still open for you/);
   assert.match(started.stdout, /auth-token v2: expires_at_epoch_seconds added/);
+
+  // Seen is receipt only: it does not clear the session-start reminder, and adapted needs real evidence.
+  assert.match((await fe.tool("contract", { action: "ack", name: "auth-token", stance: "seen" })).text, /Recorded/);
+  started = await run(["hook", "--agent", "codex.web"], { home: homeFE, input: JSON.stringify({ hook_event_name: "SessionStart" }) });
+  assert.match(started.stdout, /auth-token v2: expires_at_epoch_seconds added/);
+  assert.match(started.stdout, /acked seen: not adapted yet/);
+  assert.match((await fe.tool("contract", { action: "ack", name: "auth-token", stance: "adapted", note: "done" })).text, /evidence note of at least 20/);
 
   // FE adapts and records evidence; the producer is told, and the registry shows who caught up.
   assert.match((await fe.tool("contract", { action: "ack", name: "auth-token", stance: "adapted", note: "web/auth.ts prefers seconds with ISO fallback; both rollout orders pass" })).text, /producer has been told/);
@@ -274,10 +281,55 @@ test("contract changes: publish reaches a working consumer mid-task and a new se
 
   // The next fresh FE session is clean again.
   started = await run(["hook", "--agent", "codex.web"], { home: homeFE, input: JSON.stringify({ hook_event_name: "SessionStart" }) });
-  assert.equal(started.stdout.includes("Contract changes you have not acknowledged"), false);
+  assert.equal(started.stdout.includes("Contract items still open for you"), false);
 
   be.close();
   fe.close();
+});
+
+
+test("contract hardening over a real relay: zero-subscriber warning, objection surfacing, registry in context_package", async () => {
+  const invite = Invite.create(relay);
+  const homeBE = tmp("nitin");
+  const homeJobs = tmp("dev");
+  assert.equal((await run(["join", String(invite), "--as", "nitin"], { home: homeBE })).code, 0);
+  assert.equal((await run(["join", String(invite), "--as", "dev"], { home: homeJobs })).code, 0);
+  await invite.ready();
+  const be = mcp(homeBE, "claude-code.api", tmp("api"));
+  const jobs = mcp(homeJobs, "codex.jobs", tmp("jobs"));
+  await be.call("initialize", { protocolVersion: "2025-06-18" });
+  await jobs.call("initialize", { protocolVersion: "2025-06-18" });
+
+  await be.tool("contract", { action: "register", name: "auth-token", title: "Auth token response", summary: "expires_in: ISO string" });
+  const nobody = await be.tool("contract", { action: "publish", name: "auth-token", summary: "epoch seconds added" });
+  assert.match(nobody.text, /WARNING: no consumers are subscribed/);
+
+  // The undeclared consumer finds the contract through context_package, not only a contract list.
+  const ctx = await jobs.tool("context_package", { contracts: ["auth-token"] });
+  assert.match(ctx.text, /contract auth-token\*\* v2: epoch seconds added/);
+  assert.match(ctx.text, /0 subscribed consumers/);
+
+  await jobs.tool("contract", { action: "subscribe", name: "auth-token" });
+  await jobs.tool("contract", { action: "ack", name: "auth-token", stance: "object", note: "quarterly deploy cannot take this" });
+
+  // The producer's next session start shows the open objection; the next publish warns and tells the consumers.
+  const started = await run(["hook", "--agent", "claude-code.api"], { home: homeBE, input: JSON.stringify({ hook_event_name: "SessionStart" }) });
+  assert.match(started.stdout, /OPEN OBJECTION on auth-token v2 from dev\/codex\.jobs: quarterly deploy/);
+  const again = await be.tool("contract", { action: "publish", name: "auth-token", summary: "v3 removes the ISO field" });
+  assert.match(again.text, /Published auth-token v3/);
+  assert.match(again.text, /WARNING: 1 open objection/);
+  let shown;
+  for (let i = 0; i < 50; i++) {
+    shown = await run(["hook", "--agent", "codex.jobs"], { home: homeJobs, input: JSON.stringify({ hook_event_name: "PostToolUse" }) });
+    if (shown.stdout.includes("v3")) break;
+    await sleep(100);
+  }
+  assert.match(shown.stdout, /Open objection on this contract: dev\/codex\.jobs/);
+  const ctx2 = await jobs.tool("context_package", { query: "token" });
+  assert.match(ctx2.text, /your standing: outstanding/);
+
+  be.close();
+  jobs.close();
 });
 
 test("setup adds the hooks next to the project's own, idempotently, and remove takes them out", async () => {
