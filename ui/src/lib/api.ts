@@ -102,6 +102,25 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 const post = <T>(path: string, body: unknown = {}) => request<T>(path, { method: "POST", body: JSON.stringify(body) });
 
+/** One entry in the decision ledger (lib/decisions.mjs). */
+export interface Decision {
+  id: string;
+  title: string;
+  status: "proposed" | "approved" | "rejected" | "superseded";
+  rationale?: string;
+  affects?: string;
+  source?: string;
+  "proposed-by"?: string;
+  added?: string;
+  conflicts?: string;
+  supersedes?: string;
+  "superseded-by"?: string;
+  reviews?: string[];
+  "decided-by"?: string;
+  "decided-on"?: string;
+  reason?: string;
+}
+
 export interface AttachedFile {
   name: string;
   data: string; // base64
@@ -134,6 +153,8 @@ export const api = {
     post<{ ok: boolean; seq?: number; current?: unknown }>("/api/board/memory/file", { path, text, message, base }),
   memoryHistory: () => request<{ commits: { seq: number; author: string; message: string; ts: number; changes: { path: string; from: number; to: number; deleted: boolean }[] }[] }>("/api/board/memory/history"),
   memorySearch: (q: string) => request<{ hits: { path: string; line: number; text: string }[] }>(`/api/board/memory/search?q=${encodeURIComponent(q)}`),
+  decisions: () => request<{ entries: Decision[] }>("/api/board/decisions"),
+  decide: (id: string, outcome: "approve" | "reject", reason = "") => post<{ entry: Decision }>("/api/board/decisions/decide", { id, outcome, reason }),
   dreams: () => request<{ dreams: Dream[]; running: { started: number; log: { kind: string; text: string; ts: number }[] } | null }>("/api/board/memory/dreams"),
   dream: () => post<{ started: boolean }>("/api/board/memory/dream"),
   settings: () => request<{ hasKey: boolean; dreamModel: string; lastDream: number }>("/api/board/settings"),

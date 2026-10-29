@@ -18,8 +18,10 @@ them, on the record:
   advise the ruling teammate; they change nothing on their own. This is where contradiction
   catching actually lives: a reviewing agent can spot a semantic clash that word matching
   never will.
-- **Teammates rule.** `chamber decisions` lists the ledger; `chamber decide <id> approve` (or
-  `reject --reason …`) records your ruling with your name and the date. The agent MCP tools
+- **Teammates rule.** In the app, Memory → Decisions shows what is waiting, with each
+  proposal's reasons, reviews and any overlap, and Approve / Reject buttons. From a terminal,
+  `chamber decisions` lists the ledger and `chamber decide <id> approve` (or
+  `reject --reason …`) does the same. Either way the ruling goes on the record with your name and the date. The agent MCP tools
   deliberately have no ruling tool, so the path an agent uses every day cannot mark its own
   suggestion approved.
 - **Every new session starts with the record.** Approved decisions are injected alongside
@@ -35,7 +37,10 @@ them, on the record:
   the teammate ruling on it sees the clash.
 
 The ledger is plain structured Markdown in the chamber's end-to-end-encrypted shared memory,
-with the same optimistic concurrency as every other memory write. No new dependencies, no
+committed against the version it was read at: if two agents (or an agent and you) write at
+once, the second is refused by the relay and redone on top of the first, so nothing is
+written over. Agents' memory tools and the dreamer leave the ledger file alone; it changes
+only through the decision tool, the app and the CLI. No new dependencies, no
 embeddings, no API keys, no background model runs.
 
 ## What it costs
@@ -63,7 +68,7 @@ first filter only; agent review is the semantic check.
 ## Trust note: a record for people acting in good faith, not proof
 
 Two things this ledger is not. It is not enforcement: nothing stops a determined agent from
-editing the file with the raw memory tools, or from running `chamber decide` itself if it has
+rewriting the file through the relay directly, or from running `chamber decide` itself if it has
 a shell. And it is not proof: the `proposed-by` / `decided-by` fields are plain, editable
 text. An agent that bypasses the tools can write `decided-by: nitin (human)` itself, and no
 one could tell from the file. What the ledger does give a team whose agents use the tools as
