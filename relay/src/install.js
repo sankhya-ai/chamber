@@ -18,6 +18,7 @@ import board from "../../lib/board.mjs";
 import admin from "../../lib/admin.mjs";
 import away from "../../lib/away.mjs";
 import coordination from "../../lib/coordination.mjs";
+import contracts from "../../lib/contracts.mjs";
 import decisions from "../../lib/decisions.mjs";
 import deploy from "../../lib/deploy.mjs";
 import dreamLib from "../../lib/dream.mjs";
@@ -45,6 +46,7 @@ const FILES = {
   "lib/admin.mjs": admin,
   "lib/away.mjs": away,
   "lib/coordination.mjs": coordination,
+  "lib/contracts.mjs": contracts,
   "lib/decisions.mjs": decisions,
   "lib/deploy.mjs": deploy,
   "lib/dream.mjs": dreamLib,

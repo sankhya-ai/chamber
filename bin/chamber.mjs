@@ -336,6 +336,29 @@ async function main() {
       if (outcome === "approve" && entry.supersedes) console.log(`${entry.supersedes} is now superseded and no longer served to sessions.`);
       return 0;
     }
+    case "contracts": {
+      const config = needConfig();
+      const { TeamMemory } = await import("../lib/memory.mjs");
+      const { ContractRegistry } = await import("../lib/contracts.mjs");
+      const registry = new ContractRegistry(new TeamMemory(config.invite, `${config.owner}/terminal`), `${config.owner}/terminal`);
+      const entries = await registry.list();
+      if (!entries.length) {
+        console.log("No contracts registered. Agents register the contracts they produce and subscribe to the ones they consume with the chamber contract tool; consumers are notified on every new version.");
+        return 0;
+      }
+      for (const e of entries) {
+        console.log(`- \x1b[1m${e.name}\x1b[0m v${e.version}: ${e.title}`);
+        if (e.summary) console.log(`    current: ${e.summary}`);
+        console.log(`    producer: ${e.producer} · updated: ${e.updated}${e.decision ? ` · decision: ${e.decision}` : ""}`);
+        if (!e.consumers.length) console.log("    no consumers subscribed");
+        const { consumers } = await registry.status(e.name);
+        for (const c of consumers) {
+          const last = c.state === "outstanding" && c.lastVersion ? ` (last acked v${c.lastVersion})` : "";
+          console.log(`    consumer: ${c.agent} — ${c.state.toUpperCase()}${c.ack?.note ? ` — ${c.ack.note}` : ""}${c.ack ? ` (${c.ack.date})` : ""}${last}`);
+        }
+      }
+      return 0;
+    }
     case "members": {
       const { listMembers } = await import("../lib/admin.mjs");
       const { personal, members } = await listMembers(needConfig());
