@@ -25,7 +25,7 @@ says nothing about whether the consumer adapted. The contract registry
 - **The registry shows who has caught up.** action=status lists each consumer as
   OUTSTANDING, SEEN, ADAPTED or OBJECT against the current version — so "message delivered"
   is never mistaken for "frontend updated". New sessions start with their own unacknowledged
-  changes, and `chamber contracts` gives teammates the same view.
+  changes, and `chamber contracts` and the app's Memory → Contracts give teammates the same view.
 - **Gaps are warned about, not gated.** Publishing with no subscribers succeeds but says so
   loudly: the registry only knows agents that subscribed and cannot see other dependents, so
   tell them and have them subscribe. An open objection (a consumer's latest ack is `object`)
