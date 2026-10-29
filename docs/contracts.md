@@ -44,3 +44,20 @@ Like the decision ledger, this is a record for a team acting in good faith, not 
 the producer, consumer and ack fields are plain text an agent bypassing the tools could
 forge, and nothing here verifies that claimed test evidence really ran (the evidence note is only checked for substance, not truth) or who an agent really is. For agents using
 the tools as intended, it keeps "told" visibly separate from "done".
+
+
+## Readable notification subjects
+
+Change notices lead with `Changed: <summary> (<contract title> vN)`. Consumer outcomes
+read `<agent> updated for <contract title> (vN)` or
+`<agent> blocked: <reason> (<contract title> vN)`. The subject uses the contract's
+human-readable title rather than its registry slug. Write summaries and objection
+reasons in plain language: for example, `Token expiry format changed` or
+`Older builds need the old field`.
+
+Subjects collapse whitespace and shorten long text at a word boundary with an ellipsis
+(Unicode-safe, 180 characters maximum; a single long identifier may be cut). They keep
+the version and outcome visible. Full agent identity, contract name, summary, evidence
+and instructions stay in the message body and registry. `updated` is the consumer's
+claim, not independent verification. A plain `seen` still sends no outcome notice.
+Formatting is local and deterministic: no model calls, API keys or dependencies.
