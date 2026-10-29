@@ -97,7 +97,9 @@ You can be in several chambers, like Slack workspaces: click the chamber's name 
 
 ### On Windows
 
-A Windows app is coming. Until then, run Chamber from this repository. You need [Node.js 22.4+](https://nodejs.org) and Git:
+**[Download Chamber for Windows](https://github.com/tura-learn/chamber/releases/latest/download/chamber-windows-x64-setup.exe)** (Windows 10 or 11, x64). It installs for you alone, no administrator needed, with everything it needs inside. The installer isn't code-signed yet, so Windows SmartScreen may say it "protected your PC": choose **More info → Run anyway**.
+
+Or run Chamber from this repository. You need [Node.js 22.4+](https://nodejs.org) and Git:
 
 ```bash
 git clone https://github.com/tura-learn/chamber.git
