@@ -9,6 +9,8 @@
 //   chamber invite                  (admin) a personal join command for one teammate
 //   chamber members                 who is in the chamber
 //   chamber memory [path]           read the team's memory (MEMORY.md)
+//   chamber decisions               the decision ledger: what agents proposed, what humans approved
+//   chamber decide <id> <approve|reject> [--reason …]  (human) rule on a proposed decision
 //   chamber dream                   tidy the team's memory now (needs OPENROUTER_API_KEY)
 //   chamber revoke <name>           (admin) remove a teammate
 //   chamber setup                   put the project you are in in the chamber: its Claude Code, Codex,
@@ -67,6 +69,7 @@ const { values: opts, positionals } = parseArgs({
     type: { type: "string" },
     status: { type: "string" },
     token: { type: "string" },
+    reason: { type: "string" },
     "chamber-hook": { type: "boolean" },
     home: { type: "string" },
     chamber: { type: "string" },
@@ -295,6 +298,42 @@ async function main() {
       const config = needConfig();
       const file = await new TeamMemory(config.invite, `${config.owner}/terminal`).read(positionals[0] || ENTRY);
       console.log(file?.text ?? "(empty)");
+      return 0;
+    }
+    case "decisions": {
+      const config = needConfig();
+      const { TeamMemory } = await import("../lib/memory.mjs");
+      const { DecisionLedger } = await import("../lib/decisions.mjs");
+      const ledger = new DecisionLedger(new TeamMemory(config.invite, `${config.owner}/terminal`), `${config.owner}/terminal`);
+      const entries = await ledger.list({ status: opts.status });
+      if (!entries.length) {
+        console.log("The decision ledger is empty. Agents propose decisions with the chamber decision tools; you approve them here.");
+        return 0;
+      }
+      for (const e of entries) {
+        console.log(`- \x1b[1m${e.id}\x1b[0m (${e.status}): ${e.title}`);
+        if (e.rationale) console.log(`    rationale: ${e.rationale}`);
+        if (e.affects) console.log(`    affects: ${e.affects}`);
+        console.log(`    proposed-by: ${e["proposed-by"] ?? "?"} · added: ${e.added ?? "?"}`);
+        if (e["decided-by"]) console.log(`    decided-by: ${e["decided-by"]} · ${e["decided-on"] ?? ""}${e.reason ? ` · reason: ${e.reason}` : ""}`);
+        if (e.conflicts && e.conflicts !== "none") console.log(`    conflicts: ${e.conflicts}`);
+        if (e.supersedes) console.log(`    supersedes: ${e.supersedes}`);
+        if (e["superseded-by"]) console.log(`    superseded-by: ${e["superseded-by"]}`);
+        for (const r of e.reviews ?? []) console.log(`    review: ${r}`);
+      }
+      return 0;
+    }
+    case "decide": {
+      const config = needConfig();
+      const [id, outcome] = positionals;
+      if (!id || !["approve", "reject"].includes(outcome)) throw new LineError("chamber decide <id> <approve|reject> [--reason …]");
+      const { TeamMemory } = await import("../lib/memory.mjs");
+      const { DecisionLedger } = await import("../lib/decisions.mjs");
+      const ledger = new DecisionLedger(new TeamMemory(config.invite, `${config.owner}/terminal`), `${config.owner}/terminal`);
+      const entry = await ledger.decide(id, outcome, { by: config.owner, reason: opts.reason || "" });
+      console.log(`✔ ${entry.id} ${entry.status}: ${entry.title}`);
+      if (outcome === "approve") console.log("Every new agent session now starts with this decision.");
+      if (outcome === "approve" && entry.supersedes) console.log(`${entry.supersedes} is now superseded and no longer served to sessions.`);
       return 0;
     }
     case "members": {

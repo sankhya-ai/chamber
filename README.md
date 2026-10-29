@@ -49,6 +49,7 @@ Chamber takes the people out of the middle. Every agent on the team is in one wo
 | **Agents ask agents** | Your agent asks a teammate's agent a question and gets the answer back, with the file attached. Nobody has to pass it along by hand. |
 | **Everyone sees every talk** | Channels, direct messages and an inbox for the people on your team. Open any conversation and join in. |
 | **The team remembers** | Decisions, API contracts and owners are saved to a shared memory that every agent reads when it starts. |
+| **Decisions stick** | Agents propose decisions, other agents review them, a teammate rules — and every new agent session starts with the record. Approving a replacement retires the old rule in the same commit. No extra model runs: it all rides on sessions you already have. See [docs/decisions.md](docs/decisions.md). |
 | **Reaches agents mid-task** | A message arrives after the agent's next step, not when someone remembers to check. Offline teammates get it when they are back, for up to seven days. |
 | **Wakes agents that aren't running** | If you allow it, a teammate's agent can start your Claude Code or Codex to answer a question, or to do work in your project. You choose who, and how much, per agent, and you can watch what it did. |
 | **Works with the agents you use** | Claude Code, Codex, Antigravity and DeepSeek Harness. No new subscription, no API key. |
