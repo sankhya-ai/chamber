@@ -31,7 +31,27 @@ const epochLib = await import("../lib/epoch.mjs");
 
 let relay;
 let relayProc;
+let relayPort;
+let relayDir;
 const admin = newAdminKey();
+
+async function waitRelayUp() {
+  for (let i = 0; i < 120; i++) {
+    try {
+      if ((await fetch(relay)).ok) return;
+    } catch {}
+    await sleep(500);
+  }
+  assert.fail("relay did not start");
+}
+
+async function spawnRelay() {
+  relayProc = spawn(WRANGLER, ["dev", "--local", "--ip", "127.0.0.1", "--port", String(relayPort), "--persist-to", relayDir, "--var", `ADMIN_KEY:${admin.public}`], {
+    cwd: join(ROOT, "relay"), stdio: "ignore", detached: true,
+  });
+  relay = `http://127.0.0.1:${relayPort}`;
+  await waitRelayUp();
+}
 
 async function freePort() {
   return new Promise((done) => {
@@ -44,17 +64,9 @@ async function freePort() {
 
 before(async () => {
   assert.ok(existsSync(WRANGLER), "npm install in relay/ first");
-  const port = await freePort();
-  relayProc = spawn(WRANGLER, ["dev", "--local", "--ip", "127.0.0.1", "--port", String(port), "--persist-to", tmp("relay"), "--var", `ADMIN_KEY:${admin.public}`], {
-    cwd: join(ROOT, "relay"), stdio: "ignore", detached: true,
-  });
-  relay = `http://127.0.0.1:${port}`;
-  for (let i = 0; i < 120; i++) {
-    try {
-      if ((await fetch(relay)).ok) break;
-    } catch {}
-    await sleep(500);
-  }
+  relayPort = await freePort();
+  relayDir = tmp("relay");
+  await spawnRelay();
 });
 
 after(() => {
@@ -349,4 +361,62 @@ test("7. downgrade semantics: no silent path onto or off a v3 line", async () =>
   assert.equal(ok.lineVersion, 3);
   ok.close();
   eliV2.close();
+});
+
+test("8. relay restart durability: trusted epoch, revocation and resumption survive a relay restart", async () => {
+  // Idempotent-retry shape of the atomic order first (crash-after-apply recovery): a repeated
+  // revoke+rotate answers 409 naming the CURRENT epoch - which confirms the state instead of
+  // rolling anything back - and the revocation stands.
+  const retry = await fetch(`${relay}/v1/lines/${lineX.lineId}/admin`, { method: "POST", headers: { ...lineX.auth, "content-type": "application/json" }, body: JSON.stringify({ order: revocation(admin.private, lineX.lineId, "nitin", "revoke", 2) }) });
+  assert.equal(retry.status, 409, "a repeated atomic order is a state confirmation, not a rollback");
+  assert.match((await retry.json()).error || "", /already at epoch 2/);
+
+  // Close every client, then kill the relay hard and respawn it on the SAME persisted state.
+  for (const c of [...clients]) {
+    try {
+      c.close();
+    } catch {}
+  }
+  await sleep(300);
+  process.kill(-relayProc.pid, "SIGKILL");
+  await sleep(500);
+  await spawnRelay();
+
+  // The revoked member is still refused (revocation survived the restart)...
+  const again = await tryJoin(bob.invite, "nitin/board");
+  assert.equal(again.connected, false);
+  assert.match(again.problem, /removed/);
+  again.close();
+
+  // ...a current member resumes from her on-disk epoch keys without any new distribution...
+  const alice2 = await tryJoin(alice.invite, "ashish/board");
+  assert.equal(alice2.connected, true);
+  assert.equal(alice2.lineVersion, 3, "the line version survived the restart");
+  assert.equal(alice2.epochs.current, 2, "her epoch keys came from the 0600 file");
+  const carol2 = await tryJoin(carol.invite, "mia/board");
+  assert.equal(carol2.connected, true);
+
+  // ...and the trusted current epoch survived: a stale epoch-1 send is STILL refused...
+  const frames = [];
+  alice2.ws.addEventListener("message", (event) => {
+    try {
+      const f = JSON.parse(String(event.data));
+      if (f.t === "error") frames.push(f);
+    } catch {}
+  });
+  const staleId = hex32();
+  const ts = Date.now();
+  const staleBody = await lineX.seal({ text: "stale after restart", files: [], thread: staleId, title: "", type: "message", patch: null, branch: null }, { sender: "ashish/board", to: "*", id: staleId, replyTo: null }, { n: 1, key: E1 });
+  alice2.ws.send(JSON.stringify({ t: "send", id: staleId, to: "*", body: staleBody, mentions: [], ts, epoch: 1, sig: identity.signEnvelope(alice.key.private, { line: lineX.lineId, from: "ashish/board", to: "*", id: staleId, replyTo: "", ts, hash: identity.bodyHash(staleBody), epoch: 1 }) }));
+  await waitFor(() => frames.some((f) => f.id === staleId), "the stale-epoch refusal after restart");
+  assert.match(frames.find((f) => f.id === staleId)?.error || "", /stale epoch 1.*epoch 2/);
+
+  // ...while current-epoch traffic flows for current members.
+  let got = null;
+  carol2.onMessage = (m) => (got = m);
+  await alice2.send("*", "post-restart epoch two");
+  got = await waitFor(() => got, "post-restart delivery");
+  assert.equal(got.text, "post-restart epoch two");
+  alice2.close();
+  carol2.close();
 });
