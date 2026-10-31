@@ -51,7 +51,7 @@
 import { install } from "./install.js";
 
 /** Bumped when the relay changes, so a client can tell which code answered. */
-const RELAY_VERSION = 7;
+const RELAY_VERSION = 8;
 const RETENTION_MS = 30 * 24 * 3600 * 1000;
 const MAX_ROWS = 50000;
 const MAX_BODY = 900_000;
@@ -168,9 +168,10 @@ async function sha256hex(text) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** The exact bytes a v2 message signature covers. Mirrored in lib/identity.mjs: change both. */
-function envelopePayload({ line, from, to, id, replyTo, ts, hash }) {
-  return ["chamber-msg-v2", line, from, to, id, replyTo || "", String(ts), hash].join("\n");
+/** The exact bytes a v2/v3 message signature covers. Mirrored in lib/identity.mjs: change both.
+ *  v3 signatures also commit to the epoch, so ciphertext cannot be re-labeled across epochs. */
+function envelopePayload({ line, from, to, id, replyTo, ts, hash, epoch = 0 }) {
+  return epoch ? ["chamber-msg-v3", line, from, to, id, replyTo || "", String(ts), String(epoch), hash].join("\n") : ["chamber-msg-v2", line, from, to, id, replyTo || "", String(ts), hash].join("\n");
 }
 
 /** Verify a v2 message signature against the sender's enrolled public key. */
@@ -371,6 +372,7 @@ export class Line {
     if (!columns.includes("blobs")) this.sql.exec("ALTER TABLE messages ADD COLUMN blobs TEXT NOT NULL DEFAULT ''");
     if (!columns.includes("mentions")) this.sql.exec("ALTER TABLE messages ADD COLUMN mentions TEXT NOT NULL DEFAULT ''");
     if (!columns.includes("sig")) this.sql.exec("ALTER TABLE messages ADD COLUMN sig TEXT NOT NULL DEFAULT ''"); // v2 message signatures
+    if (!columns.includes("epoch")) this.sql.exec("ALTER TABLE messages ADD COLUMN epoch INTEGER"); // v3: the epoch a body is sealed under (0 = bootstrap channel)
     this.sql.exec("CREATE INDEX IF NOT EXISTS messages_to ON messages (to_agent, seq)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS channels (name TEXT NOT NULL, owner TEXT NOT NULL, PRIMARY KEY (name, owner))");
     // Personal invites: which member holds a name, and members the admin removed.
@@ -802,7 +804,7 @@ export class Line {
   }
 
   broadcastRoster() {
-    const frame = JSON.stringify({ t: "roster", agents: this.roster(), ...(this._lv === 2 ? { certs: this.enrolledCerts() } : {}) });
+    const frame = JSON.stringify({ t: "roster", agents: this.roster(), ...(this._lv >= 2 ? { certs: this.enrolledCerts() } : {}) });
     for (const { ws } of this.members()) this.send(ws, frame);
   }
 
@@ -956,21 +958,26 @@ export class Line {
     const claims = await signedByAdmin(adminKey, pass);
     const line = this.line || (await this.ctx.storage.get("line"));
     if (!claims || claims.line !== line || !claims.member) return "this chamber needs a personal invite: ask its admin for one";
-    // The protocol version is fixed at the first admit: a v2 line never downgrades to v1 semantics
-    // silently, and a v1 line never pretends v2 properties.
+    // The protocol version is fixed at the first admit: a v2/v3 line never downgrades to lower
+    // semantics silently, and a v1 line never pretends v2/v3 properties.
     const wantsV2 = claims.v === 2;
+    const wantsV3 = claims.v === 3;
     let version = await this.lineVersion();
-    if (version === 2 && !wantsV2) return "this chamber needs chamber >= v2: ask its admin for a v2 certificate (the old passes do not work here)";
+    if (version === 3 && !wantsV3) return "this chamber needs chamber >= v3: ask its admin for a v3 certificate (older passes and v2 certificates do not work here)";
+    if (version === 2 && !wantsV2 && !wantsV3) return "this chamber needs chamber >= v2: ask its admin for a v2 certificate (the old passes do not work here)";
+    if (version === 2 && wantsV3) return "this chamber is v2 but your certificate is v3: ask its admin for a v2 certificate";
     if (!version) {
-      version = wantsV2 ? 2 : 1;
+      version = wantsV3 ? 3 : wantsV2 ? 2 : 1;
       await this.setLineVersion(version);
     }
     if (this.sql.exec("SELECT 1 FROM revoked WHERE member = ?", claims.member).toArray().length) return "you were removed from this chamber by its admin";
     if (this.sql.exec("SELECT 1 FROM removed_names WHERE owner = ?", owner).toArray().length) return `the name ${owner} was removed from this chamber by its admin`;
-    if (wantsV2 && version === 2) {
-      // A v2 certificate binds this member to ONE name and one public key, both signed by the admin.
+    if ((wantsV2 && version === 2) || (wantsV3 && version === 3)) {
+      // A v2/v3 certificate binds this member to ONE name and one public key, both signed by the
+      // admin; a v3 certificate additionally binds the X25519 encryption key epoch keys wrap to.
       if (!claims.owner || claims.owner !== owner) return `this certificate is for ${claims.owner || "another name"}, not ${owner}`;
-      if (!PUBKEY.test(String(claims.pubkey || ""))) return "this v2 certificate carries no valid public key";
+      if (!PUBKEY.test(String(claims.pubkey || ""))) return `this v${claims.v} certificate carries no valid public key`;
+      if (wantsV3 && !PUBKEY.test(String(claims.enc || ""))) return "this v3 certificate carries no valid encryption key";
       const enrolled = this.sql.exec("SELECT owner, pubkey FROM enrolled WHERE member = ?", claims.member).toArray()[0];
       if (enrolled && (enrolled.owner !== claims.owner || enrolled.pubkey !== claims.pubkey)) return "this certificate does not match the key this member enrolled with";
     }
@@ -987,9 +994,9 @@ export class Line {
       this.sql.exec("DELETE FROM names WHERE member = ?", claims.member); // a member holds one name: renaming frees the old one
       this.sql.exec("INSERT INTO names (owner, member, since) VALUES (?, ?, ?)", owner, claims.member, Date.now());
     }
-    if (wantsV2 && version === 2) {
+    if ((wantsV2 && version === 2) || (wantsV3 && version === 3)) {
       this.sql.exec("INSERT OR IGNORE INTO enrolled (member, owner, pubkey, cert, since) VALUES (?, ?, ?, ?, ?)", claims.member, claims.owner, claims.pubkey, pass, Date.now());
-      return { member: claims.member, pubkey: claims.pubkey, version: 2 };
+      return { member: claims.member, pubkey: claims.pubkey, version };
     }
     return { member: claims.member, pubkey: null, version: 1 };
   }
@@ -1046,7 +1053,7 @@ export class Line {
     ws.serializeAttachment(who);
     this.sql.exec("INSERT OR IGNORE INTO channels (name, owner) VALUES ('#general', ?)", who.owner);
     const version = await this.lineVersion();
-    this.send(ws, JSON.stringify({ t: "welcome", agent, version, agents: this.roster(), channels: this.channels(), ...(version === 2 ? { certs: this.enrolledCerts() } : {}) }));
+    this.send(ws, JSON.stringify({ t: "welcome", agent, version, agents: this.roster(), channels: this.channels(), ...(version >= 2 ? { certs: this.enrolledCerts() } : {}) }));
 
     // What it missed: messages to it (or to everyone) after its cursor…
     const since = Number.isFinite(frame.since) ? frame.since : 0;
@@ -1116,12 +1123,14 @@ export class Line {
     const version = await this.lineVersion();
     let sig = "";
     let ts = now;
-    if (version === 2) {
-      // Identity v2: the envelope must be signed by the sender's ENROLLED key over
-      // (line, from, to, id, reply_to, ts, sha256(body)); the relay verifies before storing or
-      // forwarding, and clients verify again on receipt. Replays (same id) and stale timestamps
-      // are rejected; a revoked member's socket is dropped even if it was still connected.
-      if (!who.pubkey) return this.send(ws, JSON.stringify({ t: "error", error: "this chamber needs chamber >= v2: reconnect with a v2 certificate", id }));
+    let epoch = null;
+    if (version >= 2) {
+      // Identity v2/v3: the envelope must be signed by the sender's ENROLLED key over
+      // (line, from, to, id, reply_to, ts, [epoch,] sha256(body)); the relay verifies before
+      // storing or forwarding, and clients verify again on receipt. Replays (same id) and stale
+      // timestamps are rejected; a revoked member's socket is dropped even if it was still
+      // connected. v3 messages also carry their epoch, committed by the signature.
+      if (!who.pubkey) return this.send(ws, JSON.stringify({ t: "error", error: `this chamber needs chamber >= v${version}: reconnect with a certificate`, id }));
       ts = Number(frame.ts);
       if (!Number.isFinite(ts) || Math.abs(now - ts) > V2_CLOCK_SKEW_MS) return this.send(ws, JSON.stringify({ t: "error", error: "the message timestamp is outside the acceptance window", id }));
       if (this.sql.exec("SELECT 1 FROM messages WHERE id = ?", id).toArray().length) return this.send(ws, JSON.stringify({ t: "error", error: "that message id was already used", id }));
@@ -1135,7 +1144,11 @@ export class Line {
       sig = String(frame.sig || "");
       const line = this.line || (await this.ctx.storage.get("line"));
       const hash = await sha256hex(body);
-      if (!(await verifyEnvelopeSig(who.pubkey, { line, from: who.agent, to, id, replyTo: replyTo || "", ts, hash }, sig))) {
+      if (version === 3) {
+        epoch = Number(frame.epoch);
+        if (!Number.isInteger(epoch) || epoch < 0) return this.send(ws, JSON.stringify({ t: "error", error: "a v3 message needs its epoch (0 is the bootstrap channel)", id }));
+      }
+      if (!(await verifyEnvelopeSig(who.pubkey, { line, from: who.agent, to, id, replyTo: replyTo || "", ts, hash, epoch: epoch || 0 }, sig))) {
         return this.send(ws, JSON.stringify({ t: "error", error: "bad message signature", id }));
       }
     }
@@ -1145,7 +1158,7 @@ export class Line {
     const blobIds = (Array.isArray(frame.blobs) ? frame.blobs : []).map(String).filter((b) => BLOB.test(b)).slice(0, 20);
     const row = this.sql
       .exec(
-        "INSERT INTO messages (id, from_agent, to_agent, to_owner, reply_to, body, ts, blobs, mentions, sig) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+        "INSERT INTO messages (id, from_agent, to_agent, to_owner, reply_to, body, ts, blobs, mentions, sig, epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
         id,
         who.agent,
         toAgent,
@@ -1156,6 +1169,7 @@ export class Line {
         blobIds.join(","),
         mentions.length ? `,${mentions.join(",")},` : "",
         sig,
+        epoch,
       )
       .toArray()[0];
     const envelope = JSON.stringify(this.envelope(row));
@@ -1197,6 +1211,7 @@ export class Line {
       ts: row.ts,
       mentions: String(row.mentions || "").split(",").filter(Boolean),
       ...(row.sig ? { sig: row.sig } : {}),
+      ...(row.epoch != null ? { epoch: row.epoch } : {}),
     };
   }
 
