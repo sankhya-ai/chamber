@@ -51,7 +51,7 @@
 import { install } from "./install.js";
 
 /** Bumped when the relay changes, so a client can tell which code answered. */
-const RELAY_VERSION = 6;
+const RELAY_VERSION = 7;
 const RETENTION_MS = 30 * 24 * 3600 * 1000;
 const MAX_ROWS = 50000;
 const MAX_BODY = 900_000;
@@ -61,6 +61,8 @@ const CHANNEL = /^#[a-z0-9][a-z0-9_-]{0,39}$/;
 const OWNER = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 const BLOB = /^[0-9a-f]{32}$/;
 const MSG_ID = /^[0-9a-f]{32}$/;
+const PUBKEY = /^[A-Za-z0-9_-]{43}$/; // a raw 32-byte Ed25519 public key, base64url
+const V2_CLOCK_SKEW_MS = 5 * 60 * 1000; // a v2 message's signed ts must be within this of the relay's clock
 const MAX_BLOB = 25 * 1024 * 1024;
 const IDLE_WIPE_MS = 10 * 60 * 1000;
 const POLL_WAIT_MS = 25_000; // a long poll answers at once when there's something, else after this
@@ -159,6 +161,27 @@ export default {
 };
 
 const b64 = (text) => Uint8Array.from(atob(text.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+
+/** sha256 hex of a string (the sealed body): v2 signatures cover the hash, not the body. */
+async function sha256hex(text) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** The exact bytes a v2 message signature covers. Mirrored in lib/identity.mjs: change both. */
+function envelopePayload({ line, from, to, id, replyTo, ts, hash }) {
+  return ["chamber-msg-v2", line, from, to, id, replyTo || "", String(ts), hash].join("\n");
+}
+
+/** Verify a v2 message signature against the sender's enrolled public key. */
+async function verifyEnvelopeSig(pubkey, fields, sig) {
+  try {
+    const key = await crypto.subtle.importKey("raw", b64(pubkey), { name: "Ed25519" }, false, ["verify"]);
+    return await crypto.subtle.verify({ name: "Ed25519" }, key, b64(sig), new TextEncoder().encode(envelopePayload(fields)));
+  } catch {
+    return false;
+  }
+}
 
 /** The claims of a token the admin signed (pass or order), or null. */
 async function signedByAdmin(adminKey, token) {
@@ -347,6 +370,7 @@ export class Line {
     if (!columns.includes("delivered")) this.sql.exec("ALTER TABLE messages ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0");
     if (!columns.includes("blobs")) this.sql.exec("ALTER TABLE messages ADD COLUMN blobs TEXT NOT NULL DEFAULT ''");
     if (!columns.includes("mentions")) this.sql.exec("ALTER TABLE messages ADD COLUMN mentions TEXT NOT NULL DEFAULT ''");
+    if (!columns.includes("sig")) this.sql.exec("ALTER TABLE messages ADD COLUMN sig TEXT NOT NULL DEFAULT ''"); // v2 message signatures
     this.sql.exec("CREATE INDEX IF NOT EXISTS messages_to ON messages (to_agent, seq)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS channels (name TEXT NOT NULL, owner TEXT NOT NULL, PRIMARY KEY (name, owner))");
     // Personal invites: which member holds a name, and members the admin removed.
@@ -354,6 +378,8 @@ export class Line {
     this.sql.exec("CREATE TABLE IF NOT EXISTS revoked (member TEXT PRIMARY KEY, at INTEGER NOT NULL)");
     // Names the admin removed: refused from then on, even for someone who never had a pass.
     this.sql.exec("CREATE TABLE IF NOT EXISTS removed_names (owner TEXT PRIMARY KEY, at INTEGER NOT NULL)");
+    // Identity v2: the admin-certified enrollment, member -> (name, public key, certificate).
+    this.sql.exec("CREATE TABLE IF NOT EXISTS enrolled (member TEXT PRIMARY KEY, owner TEXT NOT NULL, pubkey TEXT NOT NULL, cert TEXT NOT NULL, since INTEGER NOT NULL)");
     // Team memory.
     this.sql.exec("CREATE TABLE IF NOT EXISTS mem_files (path TEXT PRIMARY KEY, version INTEGER NOT NULL, body TEXT NOT NULL, author TEXT NOT NULL, ts INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS mem_versions (path TEXT NOT NULL, version INTEGER NOT NULL, body TEXT, PRIMARY KEY (path, version))");
@@ -615,7 +641,8 @@ export class Line {
       const online = new Set(this.roster().map((w) => w.owner));
       const rows = this.sql.exec("SELECT owner, member, since FROM names ORDER BY owner").toArray();
       const removed = this.sql.exec("SELECT owner, at FROM removed_names ORDER BY owner").toArray();
-      return json({ personal: Boolean(await this.adminKey()), members: rows.map((r) => ({ ...r, online: online.has(r.owner) })), removed, relay: RELAY_VERSION });
+      const enrolled = Object.fromEntries(this.sql.exec("SELECT member, owner, pubkey, cert FROM enrolled").toArray().map((e) => [e.member, e]));
+      return json({ personal: Boolean(await this.adminKey()), version: (await this.lineVersion()) || 1, members: rows.map((r) => ({ ...r, online: online.has(r.owner), pubkey: enrolled[r.member]?.pubkey || null, cert: enrolled[r.member]?.cert || null })), removed, relay: RELAY_VERSION });
     }
     if (what === "member-check") {
       const pass = request.headers.get("x-chamber-pass");
@@ -775,7 +802,7 @@ export class Line {
   }
 
   broadcastRoster() {
-    const frame = JSON.stringify({ t: "roster", agents: this.roster() });
+    const frame = JSON.stringify({ t: "roster", agents: this.roster(), ...(this._lv === 2 ? { certs: this.enrolledCerts() } : {}) });
     for (const { ws } of this.members()) this.send(ws, frame);
   }
 
@@ -880,7 +907,10 @@ export class Line {
     }
     this.sql.exec("INSERT OR REPLACE INTO removed_names (owner, at) VALUES (?, ?)", claims.owner, Date.now());
     const row = this.sql.exec("SELECT member FROM names WHERE owner = ?", claims.owner).toArray()[0];
-    if (row) this.sql.exec("INSERT OR IGNORE INTO revoked (member, at) VALUES (?, ?)", row.member, Date.now());
+    if (row) {
+      this.sql.exec("INSERT OR IGNORE INTO revoked (member, at) VALUES (?, ?)", row.member, Date.now());
+      this.sql.exec("DELETE FROM enrolled WHERE member = ?", row.member); // its signatures stop verifying at the relay from now on
+    }
     this.sql.exec("DELETE FROM names WHERE owner = ?", claims.owner);
     this.sql.exec("DELETE FROM channels WHERE owner = ?", claims.owner);
     for (const { ws, who } of this.members()) {
@@ -896,7 +926,26 @@ export class Line {
     return json({ ok: true, revoked: claims.owner });
   }
 
-  /** May this hello use this name? With personal invites: a valid pass, not revoked, and the name is free or theirs. */
+  /** The line's protocol version: fixed at the FIRST admit, never changed afterwards (no silent downgrade). */
+  async lineVersion() {
+    if (this._lv == null) this._lv = Number((await this.ctx.storage.get("lineVersion")) || 0);
+    return this._lv;
+  }
+
+  async setLineVersion(version) {
+    this._lv = version;
+    await this.ctx.storage.put("lineVersion", version);
+  }
+
+  /** owner -> the admin-signed certificate of every enrolled member (clients verify the chain themselves). */
+  enrolledCerts() {
+    const out = {};
+    for (const row of this.sql.exec("SELECT n.owner AS owner, e.cert AS cert FROM names n JOIN enrolled e ON e.member = n.member").toArray()) out[row.owner] = row.cert;
+    return out;
+  }
+
+  /** May this hello use this name? With personal invites: a valid pass, not revoked, and the name is free or theirs.
+   *  Returns null (open relay), an error string, or { member, pubkey, cert, version } for the admitted member. */
   async admit(owner, pass) {
     const adminKey = await this.adminKey();
     if (!adminKey) return null;
@@ -907,8 +956,24 @@ export class Line {
     const claims = await signedByAdmin(adminKey, pass);
     const line = this.line || (await this.ctx.storage.get("line"));
     if (!claims || claims.line !== line || !claims.member) return "this chamber needs a personal invite: ask its admin for one";
+    // The protocol version is fixed at the first admit: a v2 line never downgrades to v1 semantics
+    // silently, and a v1 line never pretends v2 properties.
+    const wantsV2 = claims.v === 2;
+    let version = await this.lineVersion();
+    if (version === 2 && !wantsV2) return "this chamber needs chamber >= v2: ask its admin for a v2 certificate (the old passes do not work here)";
+    if (!version) {
+      version = wantsV2 ? 2 : 1;
+      await this.setLineVersion(version);
+    }
     if (this.sql.exec("SELECT 1 FROM revoked WHERE member = ?", claims.member).toArray().length) return "you were removed from this chamber by its admin";
     if (this.sql.exec("SELECT 1 FROM removed_names WHERE owner = ?", owner).toArray().length) return `the name ${owner} was removed from this chamber by its admin`;
+    if (wantsV2 && version === 2) {
+      // A v2 certificate binds this member to ONE name and one public key, both signed by the admin.
+      if (!claims.owner || claims.owner !== owner) return `this certificate is for ${claims.owner || "another name"}, not ${owner}`;
+      if (!PUBKEY.test(String(claims.pubkey || ""))) return "this v2 certificate carries no valid public key";
+      const enrolled = this.sql.exec("SELECT owner, pubkey FROM enrolled WHERE member = ?", claims.member).toArray()[0];
+      if (enrolled && (enrolled.owner !== claims.owner || enrolled.pubkey !== claims.pubkey)) return "this certificate does not match the key this member enrolled with";
+    }
     const holder = this.sql.exec("SELECT member FROM names WHERE owner = ?", owner).toArray()[0];
     if (holder && holder.member !== claims.member) return `the name ${owner} belongs to someone else in this chamber; pick another (chamber name <new>)`;
     if (!holder && hosted(this.env)) {
@@ -922,7 +987,11 @@ export class Line {
       this.sql.exec("DELETE FROM names WHERE member = ?", claims.member); // a member holds one name: renaming frees the old one
       this.sql.exec("INSERT INTO names (owner, member, since) VALUES (?, ?, ?)", owner, claims.member, Date.now());
     }
-    return null;
+    if (wantsV2 && version === 2) {
+      this.sql.exec("INSERT OR IGNORE INTO enrolled (member, owner, pubkey, cert, since) VALUES (?, ?, ?, ?, ?)", claims.member, claims.owner, claims.pubkey, pass, Date.now());
+      return { member: claims.member, pubkey: claims.pubkey, version: 2 };
+    }
+    return { member: claims.member, pubkey: null, version: 1 };
   }
 
   // ----- frames ---------------------------------------------------------------
@@ -937,7 +1006,7 @@ export class Line {
     const who = ws.deserializeAttachment();
     if (frame.t === "hello") return await this.hello(ws, frame);
     if (!who || !who.agent) return this.send(ws, JSON.stringify({ t: "error", error: "say hello first" }));
-    if (frame.t === "send") return this.deliver(ws, who, frame);
+    if (frame.t === "send") return await this.deliver(ws, who, frame);
     if (frame.t === "channel") return this.channel(ws, who, frame);
     if (frame.t === "ping") return this.send(ws, JSON.stringify({ t: "pong" }));
     this.send(ws, JSON.stringify({ t: "error", error: `unknown frame ${frame.t}` }));
@@ -946,11 +1015,11 @@ export class Line {
   async hello(ws, frame) {
     const agent = String(frame.agent || "").toLowerCase();
     if (!AGENT.test(agent)) return this.send(ws, JSON.stringify({ t: "error", error: "agent must be owner/name" }));
-    const refused = await this.admit(agent.split("/")[0], frame.pass);
-    if (refused) {
-      this.send(ws, JSON.stringify({ t: "error", error: refused }));
+    const admitted = await this.admit(agent.split("/")[0], frame.pass);
+    if (typeof admitted === "string") {
+      this.send(ws, JSON.stringify({ t: "error", error: admitted }));
       try {
-        ws.close(4003, refused.slice(0, 120));
+        ws.close(4003, admitted.slice(0, 120));
       } catch {}
       return;
     }
@@ -965,6 +1034,8 @@ export class Line {
     const who = {
       agent,
       owner: agent.split("/")[0],
+      member: admitted?.member || null, // personal invites / v2 enrollment
+      pubkey: admitted?.pubkey || null, // v2: the enrolled key this socket may sign with
       kind: String(frame.kind || "agent").slice(0, 32),
       label: String(frame.label || "").slice(0, 120),
       priority: Number.isFinite(frame.priority) ? frame.priority : 0,
@@ -974,7 +1045,8 @@ export class Line {
     };
     ws.serializeAttachment(who);
     this.sql.exec("INSERT OR IGNORE INTO channels (name, owner) VALUES ('#general', ?)", who.owner);
-    this.send(ws, JSON.stringify({ t: "welcome", agent, agents: this.roster(), channels: this.channels() }));
+    const version = await this.lineVersion();
+    this.send(ws, JSON.stringify({ t: "welcome", agent, version, agents: this.roster(), channels: this.channels(), ...(version === 2 ? { certs: this.enrolledCerts() } : {}) }));
 
     // What it missed: messages to it (or to everyone) after its cursor…
     const since = Number.isFinite(frame.since) ? frame.since : 0;
@@ -1018,7 +1090,7 @@ export class Line {
     this.broadcastRoster();
   }
 
-  deliver(ws, who, frame) {
+  async deliver(ws, who, frame) {
     const id = String(frame.id || "");
     const replyTo = frame.reply_to ? String(frame.reply_to) : null;
     if (!MSG_ID.test(id)) return this.send(ws, JSON.stringify({ t: "error", error: "message id must be 32 hex chars", id }));
@@ -1041,22 +1113,49 @@ export class Line {
     else return this.send(ws, JSON.stringify({ t: "error", error: "to must be owner/name, @owner, #channel or *", id }));
 
     const now = Date.now();
+    const version = await this.lineVersion();
+    let sig = "";
+    let ts = now;
+    if (version === 2) {
+      // Identity v2: the envelope must be signed by the sender's ENROLLED key over
+      // (line, from, to, id, reply_to, ts, sha256(body)); the relay verifies before storing or
+      // forwarding, and clients verify again on receipt. Replays (same id) and stale timestamps
+      // are rejected; a revoked member's socket is dropped even if it was still connected.
+      if (!who.pubkey) return this.send(ws, JSON.stringify({ t: "error", error: "this chamber needs chamber >= v2: reconnect with a v2 certificate", id }));
+      ts = Number(frame.ts);
+      if (!Number.isFinite(ts) || Math.abs(now - ts) > V2_CLOCK_SKEW_MS) return this.send(ws, JSON.stringify({ t: "error", error: "the message timestamp is outside the acceptance window", id }));
+      if (this.sql.exec("SELECT 1 FROM messages WHERE id = ?", id).toArray().length) return this.send(ws, JSON.stringify({ t: "error", error: "that message id was already used", id }));
+      if (this.sql.exec("SELECT 1 FROM revoked WHERE member = ?", who.member).toArray().length) {
+        this.send(ws, JSON.stringify({ t: "error", error: "you were removed from this chamber by its admin", id }));
+        try {
+          ws.close(4003, "removed from the chamber by its admin");
+        } catch {}
+        return;
+      }
+      sig = String(frame.sig || "");
+      const line = this.line || (await this.ctx.storage.get("line"));
+      const hash = await sha256hex(body);
+      if (!(await verifyEnvelopeSig(who.pubkey, { line, from: who.agent, to, id, replyTo: replyTo || "", ts, hash }, sig))) {
+        return this.send(ws, JSON.stringify({ t: "error", error: "bad message signature", id }));
+      }
+    }
     const { keepMs, maxRows } = retention(this.env);
     if (keepMs) this.sql.exec("DELETE FROM messages WHERE ts < ?", now - keepMs);
     if (maxRows) this.sql.exec("DELETE FROM messages WHERE seq <= (SELECT MAX(seq) FROM messages) - ?", maxRows);
     const blobIds = (Array.isArray(frame.blobs) ? frame.blobs : []).map(String).filter((b) => BLOB.test(b)).slice(0, 20);
     const row = this.sql
       .exec(
-        "INSERT INTO messages (id, from_agent, to_agent, to_owner, reply_to, body, ts, blobs, mentions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+        "INSERT INTO messages (id, from_agent, to_agent, to_owner, reply_to, body, ts, blobs, mentions, sig) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
         id,
         who.agent,
         toAgent,
         toOwner,
         frame.reply_to ? String(frame.reply_to).slice(0, 64) : null,
         body,
-        now,
+        ts,
         blobIds.join(","),
         mentions.length ? `,${mentions.join(",")},` : "",
+        sig,
       )
       .toArray()[0];
     const envelope = JSON.stringify(this.envelope(row));
@@ -1097,6 +1196,7 @@ export class Line {
       body: row.body,
       ts: row.ts,
       mentions: String(row.mentions || "").split(",").filter(Boolean),
+      ...(row.sig ? { sig: row.sig } : {}),
     };
   }
 
