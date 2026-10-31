@@ -46,7 +46,7 @@ async function waitRelayUp() {
 }
 
 async function spawnRelay() {
-  relayProc = spawn(WRANGLER, ["dev", "--local", "--ip", "127.0.0.1", "--port", String(relayPort), "--persist-to", relayDir, "--var", `ADMIN_KEY:${admin.public}`], {
+  relayProc = spawn(WRANGLER, ["dev", "--local", "--ip", "127.0.0.1", "--port", String(relayPort), "--persist-to", relayDir, "--var", `ADMIN_KEY:${admin.public}`, "CHAMBER_TEST_HOOKS:1"], {
     cwd: join(ROOT, "relay"), stdio: "ignore", detached: true,
   });
   relay = `http://127.0.0.1:${relayPort}`;
@@ -419,4 +419,85 @@ test("8. relay restart durability: trusted epoch, revocation and resumption surv
   assert.equal(got.text, "post-restart epoch two");
   alice2.close();
   carol2.close();
+});
+
+test("9. crash atomicity: a failed revoke+rotate commits NOTHING; retry completes it, even across a relay restart", async () => {
+  // A separate line so the shared chamber is untouched. fay + gus at epoch 1.
+  const lineF = await Invite.create(relay).ready();
+  const fay = { owner: "fay", ...(await v3member(lineF, "fay")) };
+  const gus = { owner: "gus", ...(await v3member(lineF, "gus")) };
+  fay.client = await tryJoin(fay.invite, "fay/board");
+  gus.client = await tryJoin(gus.invite, "gus/board");
+  assert.equal(fay.client.connected && gus.client.connected, true);
+  const E1F = epochLib.generateEpochKey();
+  await fay.client.sendDistribution(admin.private, 1, E1F, wrapSet(fay, gus));
+  await rotate(lineF, 1);
+  await waitFor(() => fay.client.epochs.current === 1 && gus.client.epochs.current === 1, "epoch 1 on both");
+
+  // Inject a failure INSIDE the transition transaction, then send the atomic revoke+rotate order.
+  const arm = await fetch(`${relay}/v1/lines/${lineF.lineId}/test-fail-transition`, { method: "POST", headers: lineF.auth });
+  assert.equal(arm.status, 200, "the test hook armed the injected failure");
+  const failed = await fetch(`${relay}/v1/lines/${lineF.lineId}/admin`, { method: "POST", headers: { ...lineF.auth, "content-type": "application/json" }, body: JSON.stringify({ order: revocation(admin.private, lineF.lineId, "gus", "revoke", 2) }) });
+  assert.equal(failed.status, 500, "the injected failure fails the order");
+  assert.match((await failed.json()).error || "", /NOT applied/, "the relay says nothing changed");
+
+  // ROLLBACK PROOF: the exact old consistent state - gus not revoked, epoch not advanced. His
+  // socket is alive and an epoch-1 send still lands (both facts together rule out either partial
+  // state: revoked-but-not-rotated AND rotated-but-not-revoked).
+  await sleep(400);
+  assert.equal(gus.client.connected, true, "the revoked-member rollback leaves the member's socket up");
+  let got = null;
+  fay.client.onMessage = (m) => (got = m);
+  await gus.client.send("*", "still here at epoch one");
+  got = await waitFor(() => got, "epoch-1 traffic still flows after the rolled-back order");
+  assert.equal(got.text, "still here at epoch one");
+
+  // Hard-kill the relay and respawn on the same storage: still exactly the old consistent state,
+  // never a pending rotation - the member rejoins and epoch-1 sends are accepted, because the
+  // revocation genuinely never happened.
+  for (const c of [...clients]) {
+    try {
+      c.close();
+    } catch {}
+  }
+  await sleep(300);
+  process.kill(-relayProc.pid, "SIGKILL");
+  await sleep(500);
+  await spawnRelay();
+  const gus2 = await tryJoin(gus.invite, "gus/board");
+  assert.equal(gus2.connected, true, "after the restart the never-applied revocation admits the member");
+  const fay2 = await tryJoin(fay.invite, "fay/board");
+  assert.equal(fay2.connected, true);
+  got = null;
+  fay2.onMessage = (m) => (got = m);
+  await gus2.send("*", "epoch one after the crash");
+  got = await waitFor(() => got, "epoch-1 send accepted after restart: old state, nothing pending");
+  assert.equal(got.text, "epoch one after the crash");
+
+  // Retry the SAME order (the hook was consumed once): now it commits - revocation and rotation
+  // together - and both boundaries hold: the member is out and the old epoch is dead for sends.
+  const retry = await fetch(`${relay}/v1/lines/${lineF.lineId}/admin`, { method: "POST", headers: { ...lineF.auth, "content-type": "application/json" }, body: JSON.stringify({ order: revocation(admin.private, lineF.lineId, "gus", "revoke", 2) }) });
+  assert.equal(retry.status, 200, "the retry commits after the injected failure");
+  assert.equal((await retry.json()).epoch, 2);
+  for (let i = 0; i < 40 && gus2.connected; i++) await sleep(100);
+  assert.equal(gus2.connected, false, "the committed revocation drops the socket");
+  const gus3 = await tryJoin(gus.invite, "gus/board");
+  assert.equal(gus3.connected, false);
+  assert.match(gus3.problem, /removed/, "the committed revocation survives");
+  gus3.close();
+
+  const frames = [];
+  fay2.ws.addEventListener("message", (event) => {
+    try {
+      const f = JSON.parse(String(event.data));
+      if (f.t === "error") frames.push(f);
+    } catch {}
+  });
+  const staleId = hex32();
+  const ts = Date.now();
+  const staleBody = await lineF.seal({ text: "stale after retry", files: [], thread: staleId, title: "", type: "message", patch: null, branch: null }, { sender: "fay/board", to: "*", id: staleId, replyTo: null }, { n: 1, key: E1F });
+  fay2.ws.send(JSON.stringify({ t: "send", id: staleId, to: "*", body: staleBody, mentions: [], ts, epoch: 1, sig: identity.signEnvelope(fay.key.private, { line: lineF.lineId, from: "fay/board", to: "*", id: staleId, replyTo: "", ts, hash: identity.bodyHash(staleBody), epoch: 1 }) }));
+  await waitFor(() => frames.some((f) => f.id === staleId), "the stale-epoch refusal after the committed retry");
+  assert.match(frames.find((f) => f.id === staleId)?.error || "", /stale epoch 1.*epoch 2/);
+  fay2.close();
 });

@@ -137,7 +137,7 @@ export default {
       return json({ error: "line required for gate review" }, 400);
     }
 
-    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|poll(?:\/(?:open|send|close))?|roster|members|admin|sync|coordination(?:\/[a-zA-Z0-9_-]+)?|memory(?:\/(?:file|commit|history))?|gates(?:\/([0-9a-f]{16,64}))?|gate\/([0-9a-f]{16,64})|restart|blobs\/([^/]+))$/);
+    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|poll(?:\/(?:open|send|close))?|roster|members|admin|sync|coordination(?:\/[a-zA-Z0-9_-]+)?|memory(?:\/(?:file|commit|history))?|gates(?:\/([0-9a-f]{16,64}))?|gate\/([0-9a-f]{16,64})|restart|test-fail-transition|blobs\/([^/]+))$/);
     if (!match) return json({ error: "not found" }, 404);
     const [, line, what, , , blob] = match;
     const token = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
@@ -356,6 +356,7 @@ export class Line {
     this.ctx = ctx;
     this.env = env;
     this.sql = ctx.storage.sql;
+    this.sql.exec("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)");
     this.sql.exec(`CREATE TABLE IF NOT EXISTS messages (
       seq INTEGER PRIMARY KEY AUTOINCREMENT,
       id TEXT NOT NULL,
@@ -653,6 +654,13 @@ export class Line {
       return json({ ok: true });
     }
     if (what === "admin") return this.admin(await request.json().catch(() => ({})));
+    if (what === "test-fail-transition") {
+      // Test-only fault injection, live solely on relays started with CHAMBER_TEST_HOOKS (the
+      // test harness); on any other relay this route does nothing at all.
+      if (!this.env.CHAMBER_TEST_HOOKS) return json({ error: "not found" }, 404);
+      await this.ctx.storage.put("testFailTransition", true);
+      return json({ ok: true });
+    }
     if (what === "sync") {
       const pass = request.headers.get("x-chamber-pass");
       const refused = await this.memberCheck(pass);
@@ -908,7 +916,16 @@ export class Line {
       if (!Number.isInteger(claims.epoch) || claims.epoch < 1) return json({ error: "a rotation names the new epoch" }, 400);
       const current = await this.currentEpoch();
       if (claims.epoch <= current) return json({ error: `the chamber is already at epoch ${current}: rotations never roll back` }, 409);
-      await this.setCurrentEpoch(claims.epoch);
+      const testFail = this.env.CHAMBER_TEST_HOOKS && (await this.ctx.storage.get("testFailTransition"));
+      if (testFail) await this.ctx.storage.delete("testFailTransition");
+      try {
+        this.ctx.storage.transactionSync(() => {
+          this.setCurrentEpochSync(claims.epoch);
+          if (testFail) throw new Error("injected transition failure");
+        });
+      } catch (error) {
+        return json({ error: `the rotation was NOT applied (nothing changed): ${error.message}` }, 500);
+      }
       return json({ ok: true, epoch: claims.epoch });
     }
     if (!OWNER.test(String(claims.owner || ""))) return json({ error: "not a valid order from this chamber's admin" }, 403);
@@ -916,14 +933,37 @@ export class Line {
       this.sql.exec("DELETE FROM removed_names WHERE owner = ?", claims.owner);
       return json({ ok: true, restored: claims.owner });
     }
-    this.sql.exec("INSERT OR REPLACE INTO removed_names (owner, at) VALUES (?, ?)", claims.owner, Date.now());
-    const row = this.sql.exec("SELECT member FROM names WHERE owner = ?", claims.owner).toArray()[0];
-    if (row) {
-      this.sql.exec("INSERT OR IGNORE INTO revoked (member, at) VALUES (?, ?)", row.member, Date.now());
-      this.sql.exec("DELETE FROM enrolled WHERE member = ?", row.member); // its signatures stop verifying at the relay from now on
+    if (claims.epoch != null) {
+      if (!Number.isInteger(claims.epoch) || claims.epoch < 1) return json({ error: "a rotation names the new epoch" }, 400);
+      const current = await this.currentEpoch();
+      if (claims.epoch <= current) return json({ error: `the chamber is already at epoch ${current}: rotations never roll back` }, 409);
     }
-    this.sql.exec("DELETE FROM names WHERE owner = ?", claims.owner);
-    this.sql.exec("DELETE FROM channels WHERE owner = ?", claims.owner);
+    // ONE Durable Object storage transaction: the revocation rows and the epoch advance commit
+    // together or not at all - there is no "revoked but not rotated" (a revoked holder's retained
+    // key gaining NEW old-epoch ciphertext) and no "rotated but not revoked" partial state, not
+    // even across a crash mid-handler. A failed order leaves the EXACT old consistent state and
+    // is retried as-is (idempotent: a fully-applied order answers 409 naming the current epoch).
+    const testFail = this.env.CHAMBER_TEST_HOOKS && (await this.ctx.storage.get("testFailTransition"));
+    if (testFail) await this.ctx.storage.delete("testFailTransition"); // consumed once, before the transaction
+    try {
+      this.ctx.storage.transactionSync(() => {
+        this.sql.exec("INSERT OR REPLACE INTO removed_names (owner, at) VALUES (?, ?)", claims.owner, Date.now());
+        const row = this.sql.exec("SELECT member FROM names WHERE owner = ?", claims.owner).toArray()[0];
+        if (row) {
+          this.sql.exec("INSERT OR IGNORE INTO revoked (member, at) VALUES (?, ?)", row.member, Date.now());
+          this.sql.exec("DELETE FROM enrolled WHERE member = ?", row.member); // its signatures stop verifying at the relay from now on
+        }
+        this.sql.exec("DELETE FROM names WHERE owner = ?", claims.owner);
+        this.sql.exec("DELETE FROM channels WHERE owner = ?", claims.owner);
+        if (claims.epoch != null) this.setCurrentEpochSync(claims.epoch);
+        // Test-only fault injection (relay started with CHAMBER_TEST_HOOKS): fail inside the
+        // transaction so tests prove the rollback leaves NOTHING applied, not just the happy path.
+        if (testFail) throw new Error("injected transition failure");
+      });
+    } catch (error) {
+      return json({ error: `the order was NOT applied (nothing changed): ${error.message}` }, 500);
+    }
+    // Committed: now the non-storage effects (dropping sockets, refreshing rosters).
     for (const { ws, who } of this.members()) {
       if (who.owner === claims.owner) {
         ws.serializeAttachment(null);
@@ -931,12 +971,6 @@ export class Line {
           ws.close(4003, "removed from the chamber by its admin");
         } catch {}
       }
-    }
-    if (claims.epoch != null) {
-      if (!Number.isInteger(claims.epoch) || claims.epoch < 1) return json({ error: "a rotation names the new epoch" }, 400);
-      const current = await this.currentEpoch();
-      if (claims.epoch <= current) return json({ error: `the chamber is already at epoch ${current}: rotations never roll back` }, 409);
-      await this.setCurrentEpoch(claims.epoch); // atomic with the revocation above
     }
     this.broadcastRoster();
     this.broadcastChannels();
@@ -946,13 +980,21 @@ export class Line {
   /** The line's trusted current epoch (v3): 0 until the admin's first rotation order. Durable
    *  (Durable Object storage, like the line version): a relay restart does not forget it. */
   async currentEpoch() {
-    if (this._ce == null) this._ce = Number((await this.ctx.storage.get("currentEpoch")) || 0);
-    return this._ce;
+    // SQL is the store of record and there is NO JS cache: a rolled-back transaction must never
+    // leave a phantom epoch behind (a cache the rollback cannot undo is exactly that bug). The
+    // read is one local SQLite lookup, cheap enough to run uncached. A relay persisted before
+    // this change still holds the epoch in KV: adopt it as the fallback.
+    const row = this.sql.exec("SELECT v FROM meta WHERE k = 'currentEpoch'").toArray()[0];
+    return row ? Number(row.v) : Number((await this.ctx.storage.get("currentEpoch")) || 0);
   }
 
   async setCurrentEpoch(epoch) {
-    this._ce = epoch;
-    await this.ctx.storage.put("currentEpoch", epoch);
+    this.setCurrentEpochSync(epoch);
+  }
+
+  /** Synchronous SQL write only: safe inside the atomic revoke+rotate transaction. */
+  setCurrentEpochSync(epoch) {
+    this.sql.exec("INSERT OR REPLACE INTO meta (k, v) VALUES ('currentEpoch', ?)", String(epoch));
   }
 
   /** The line's protocol version: fixed at the FIRST admit, never changed afterwards (no silent downgrade). */
