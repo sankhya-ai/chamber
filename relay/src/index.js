@@ -51,7 +51,7 @@
 import { install } from "./install.js";
 
 /** Bumped when the relay changes, so a client can tell which code answered. */
-const RELAY_VERSION = 8;
+const RELAY_VERSION = 9;
 const RETENTION_MS = 30 * 24 * 3600 * 1000;
 const MAX_ROWS = 50000;
 const MAX_BODY = 900_000;
@@ -902,7 +902,16 @@ export class Line {
   async admin(body) {
     const claims = await signedByAdmin(await this.adminKey(), body.order);
     const line = this.line || (await this.ctx.storage.get("line"));
-    if (!claims || claims.line !== line || !["revoke", "restore"].includes(claims.op) || !OWNER.test(String(claims.owner || ""))) return json({ error: "not a valid order from this chamber's admin" }, 403);
+    if (!claims || claims.line !== line || !["revoke", "restore", "rotate"].includes(claims.op)) return json({ error: "not a valid order from this chamber's admin" }, 403);
+    if (claims.op === "rotate") {
+      // Advance the trusted current epoch (v3). Monotonic: replay/rollback is rejected.
+      if (!Number.isInteger(claims.epoch) || claims.epoch < 1) return json({ error: "a rotation names the new epoch" }, 400);
+      const current = await this.currentEpoch();
+      if (claims.epoch <= current) return json({ error: `the chamber is already at epoch ${current}: rotations never roll back` }, 409);
+      await this.setCurrentEpoch(claims.epoch);
+      return json({ ok: true, epoch: claims.epoch });
+    }
+    if (!OWNER.test(String(claims.owner || ""))) return json({ error: "not a valid order from this chamber's admin" }, 403);
     if (claims.op === "restore") {
       this.sql.exec("DELETE FROM removed_names WHERE owner = ?", claims.owner);
       return json({ ok: true, restored: claims.owner });
@@ -923,9 +932,27 @@ export class Line {
         } catch {}
       }
     }
+    if (claims.epoch != null) {
+      if (!Number.isInteger(claims.epoch) || claims.epoch < 1) return json({ error: "a rotation names the new epoch" }, 400);
+      const current = await this.currentEpoch();
+      if (claims.epoch <= current) return json({ error: `the chamber is already at epoch ${current}: rotations never roll back` }, 409);
+      await this.setCurrentEpoch(claims.epoch); // atomic with the revocation above
+    }
     this.broadcastRoster();
     this.broadcastChannels();
-    return json({ ok: true, revoked: claims.owner });
+    return json({ ok: true, revoked: claims.owner, ...(claims.epoch != null ? { epoch: claims.epoch } : {}) });
+  }
+
+  /** The line's trusted current epoch (v3): 0 until the admin's first rotation order. Durable
+   *  (Durable Object storage, like the line version): a relay restart does not forget it. */
+  async currentEpoch() {
+    if (this._ce == null) this._ce = Number((await this.ctx.storage.get("currentEpoch")) || 0);
+    return this._ce;
+  }
+
+  async setCurrentEpoch(epoch) {
+    this._ce = epoch;
+    await this.ctx.storage.put("currentEpoch", epoch);
   }
 
   /** The line's protocol version: fixed at the FIRST admit, never changed afterwards (no silent downgrade). */
@@ -1147,6 +1174,10 @@ export class Line {
       if (version === 3) {
         epoch = Number(frame.epoch);
         if (!Number.isInteger(epoch) || epoch < 0) return this.send(ws, JSON.stringify({ t: "error", error: "a v3 message needs its epoch (0 is the bootstrap channel)", id }));
+        const current = await this.currentEpoch();
+        if (epoch > 0 && epoch !== current) {
+          return this.send(ws, JSON.stringify({ t: "error", error: epoch < current ? `stale epoch ${epoch}: the chamber is at epoch ${current} - sync and resend under the current epoch` : `epoch ${epoch} is ahead of the chamber's epoch ${current}`, id }));
+        }
       }
       if (!(await verifyEnvelopeSig(who.pubkey, { line, from: who.agent, to, id, replyTo: replyTo || "", ts, hash, epoch: epoch || 0 }, sig))) {
         return this.send(ws, JSON.stringify({ t: "error", error: "bad message signature", id }));

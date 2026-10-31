@@ -25,7 +25,7 @@ const clients = new Set();
 
 const { Invite } = await import("../lib/protocol.mjs");
 const { LineClient } = await import("../lib/client.mjs");
-const { newAdminKey, issueCertificate, revocation } = await import("../lib/admin.mjs");
+const { newAdminKey, issueCertificate, revocation, rotation } = await import("../lib/admin.mjs");
 const identity = await import("../lib/identity.mjs");
 const epochLib = await import("../lib/epoch.mjs");
 
@@ -91,6 +91,14 @@ async function waitFor(fn, what, tries = 40) {
 
 const wrapSet = (...members) => members.map((m) => ({ owner: m.owner, enc: m.key.encPublic }));
 
+/** Advance the relay's trusted current epoch (the admin's signed rotation order). */
+async function rotate(line, epoch, expectOk = true) {
+  const response = await fetch(`${relay}/v1/lines/${line.lineId}/admin`, { method: "POST", headers: { ...line.auth, "content-type": "application/json" }, body: JSON.stringify({ order: rotation(admin.private, line.lineId, epoch) }) });
+  const body = await response.json().catch(() => ({}));
+  if (expectOk) assert.equal(response.status, 200, body.error || "rotation accepted");
+  return { status: response.status, body };
+}
+
 // ----- the shared v3 chamber ---------------------------------------------------------------------
 
 let lineX, alice, bob, carol;
@@ -110,6 +118,7 @@ test("setup: a v3 chamber, epoch 1 distributed to two members, authorized reads"
   assert.equal(bob.client.connected, true);
 
   await alice.client.sendDistribution(admin.private, 1, E1, wrapSet(alice, bob));
+  await rotate(lineX, 1); // the relay now trusts epoch 1; stale/other epochs are refused
   await waitFor(() => alice.client.epochs.current === 1 && bob.client.epochs.current === 1, "epoch 1 to land on both members");
   assert.equal(alice.client.epochs.keys["1"], E1, "the unwrapped key is the admin's epoch key");
 
@@ -178,9 +187,11 @@ test("3. distribution authenticity: forged, tampered and stale distributions are
 });
 
 test("4. revocation + rotation: the revoked member keeps the past, loses the future", async () => {
-  // The admin removes nitin at the relay AND rotates: epoch 2 wraps only ashish.
-  const order = await fetch(`${relay}/v1/lines/${lineX.lineId}/admin`, { method: "POST", headers: { ...lineX.auth, "content-type": "application/json" }, body: JSON.stringify({ order: revocation(admin.private, lineX.lineId, "nitin") }) });
+  // The admin removes nitin AND rotates in ONE signed order: no window where an old-epoch send
+  // still lands for the revoked holder's retained key. Then epoch 2 is wrapped only to ashish.
+  const order = await fetch(`${relay}/v1/lines/${lineX.lineId}/admin`, { method: "POST", headers: { ...lineX.auth, "content-type": "application/json" }, body: JSON.stringify({ order: revocation(admin.private, lineX.lineId, "nitin", "revoke", 2) }) });
   assert.equal(order.status, 200);
+  assert.equal((await order.json()).epoch, 2, "the revocation and the rotation were one atomic order");
   await alice.client.sendDistribution(admin.private, 2, E2, wrapSet(alice));
   await waitFor(() => alice.client.epochs.current === 2, "epoch 2 to land on ashish");
   for (let i = 0; i < 40 && bob.client.connected; i++) await sleep(100);
@@ -209,6 +220,34 @@ test("4. revocation + rotation: the revoked member keeps the past, loses the fut
   assert.equal(again.connected, false);
   assert.match(again.problem, /removed/);
   again.close();
+
+  // Fail-closed for ACTIVE senders: a stale client (offline through the rotation, still holding a
+  // valid cert) sends under retained epoch 1 - the relay refuses, so a revoked holder's retained
+  // epoch key never yields NEW traffic. And a future epoch is refused too.
+  const frames = [];
+  alice.client.ws.addEventListener("message", (event) => {
+    try {
+      const f = JSON.parse(String(event.data));
+      if (f.t === "error") frames.push(f);
+    } catch {}
+  });
+  for (const [n, key] of [[1, E1], [7, E1]]) {
+    const id = hex32();
+    const ts = Date.now();
+    const body = await lineX.seal({ text: `epoch ${n} attempt`, files: [], thread: id, title: "", type: "message", patch: null, branch: null }, { sender: "ashish/board", to: "*", id, replyTo: null }, { n, key });
+    alice.client.ws.send(JSON.stringify({ t: "send", id, to: "*", body, mentions: [], ts, epoch: n, sig: identity.signEnvelope(alice.key.private, { line: lineX.lineId, from: "ashish/board", to: "*", id, replyTo: "", ts, hash: identity.bodyHash(body), epoch: n }) }));
+  }
+  await waitFor(() => frames.length >= 2, "both epoch refusals");
+  assert.match(frames.find((f) => /stale/.test(f.error || ""))?.error || "", /stale epoch 1.*epoch 2/, "old-epoch sends are refused, explicitly");
+  assert.match(frames.find((f) => /ahead/.test(f.error || ""))?.error || "", /epoch 7 is ahead/, "future-epoch sends are refused, explicitly");
+
+  // Rotation orders are monotonic: a replayed or older rotation is rejected, so a replayed
+  // distribution can never roll the line back to an epoch a revoked member holds.
+  const replay = await rotate(lineX, 2, false);
+  assert.equal(replay.status, 409);
+  assert.match(replay.body.error || "", /never roll back/);
+  const rollback = await rotate(lineX, 1, false);
+  assert.equal(rollback.status, 409);
 });
 
 test("5. late join + join/revoke race in one rotation: reads from the join epoch forward", async () => {
@@ -229,6 +268,39 @@ test("5. late join + join/revoke race in one rotation: reads from the join epoch
   await alice.client.send("*", "welcome mia");
   got = await waitFor(() => got, "mia reads epoch-2 traffic");
   assert.equal(got.text, "welcome mia");
+});
+
+test("5b. blobs follow the epoch, and the history rule is epoch-granular (not time-granular)", async () => {
+  // Blob storage path (files over 64KB): sealed under the current epoch, opens for wrapped
+  // members, opens with NOTHING else - the static invite key included.
+  const data = randomBytes(80 * 1024);
+  const blobId = hex32();
+  const put = await fetch(lineX.blobUrl(blobId), { method: "PUT", headers: { ...lineX.auth, "x-chamber-pass": alice.cert }, body: await lineX.sealBlob(data, blobId, { n: 2, key: E2 }) });
+  assert.equal(put.status, 200);
+  const got = await fetch(lineX.blobUrl(blobId), { headers: { ...lineX.auth, "x-chamber-pass": alice.cert } });
+  const sealedBytes = new Uint8Array(await got.arrayBuffer());
+  assert.deepEqual([...(await lineX.openBlob(sealedBytes, blobId, { n: 2, key: E2 })).slice(0, 8)], [...data.slice(0, 8)], "epoch-sealed blob opens with the epoch key");
+  await assert.rejects(() => lineX.openBlob(sealedBytes, blobId), /does not open/, "the static invite key opens no epoch blob");
+  await assert.rejects(() => lineX.openBlob(sealedBytes, blobId, { n: 1, key: E1 }), /does not open/, "an older epoch opens no epoch-2 blob");
+
+  // The exact history rule: a member wrapped the CURRENT epoch reads everything sealed under it,
+  // WHENEVER it was sent - including traffic from before they joined. Only a rotation AT the join
+  // makes pre-join traffic unreadable. dave joins now and is wrapped epoch 2 (no rotation).
+  const dave = { owner: "dave", ...(await v3member(lineX, "dave")) };
+  await alice.client.sendDistribution(admin.private, 2, E2, wrapSet(alice, carol, dave)); // dave offline: it waits for him
+  dave.client = await tryJoin(dave.invite, "dave/board");
+  assert.equal(dave.client.connected, true);
+  await waitFor(() => dave.client.epochs.current === 2, "the waiting distribution to reach dave");
+  const texts = [];
+  dave.client.onMessage = (m) => texts.push(m.text);
+  const sync = await (await fetch(lineX.syncUrl(0), { headers: { ...lineX.auth, "x-chamber-pass": dave.cert } })).json();
+  for (const row of (sync.messages || []).filter((m) => m.epoch >= 1)) {
+    await dave.client.testFrame({ ...row, to: row.to || "*" });
+  }
+  assert.ok(texts.includes("post-rotation secret"), "pre-join traffic under a HELD epoch opens - the rule is epoch-granular");
+  assert.ok(texts.includes("welcome mia"), "all epoch-2 traffic opens, whenever sent");
+  assert.ok(!texts.includes("epoch-one hello") && !texts.includes("not for mia"), "epoch-1 history stays closed: dave was never wrapped epoch 1");
+  dave.client.close();
 });
 
 test("6. restart persistence: a fresh client on the same machine reads and sends from disk", async () => {
