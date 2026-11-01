@@ -633,6 +633,7 @@ test("the Deploy-button path: a fresh relay is claimed by the first chamber; the
     });
     assert.equal(made.code, 0, made.out);
     assert.match(made.out, /you are its admin, as ashish\. The relay is now private to it\./);
+    assert.match(made.out, /It's verified/, "a new chamber starts verified (v3)");
     assert.match((await (await fetch(fresh.url, { headers: { accept: "text/html" } })).text()), /belongs to a chamber/);
     assert.equal((await fetch(`${fresh.url}/v1/claim`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 409, "a relay is claimed once");
     const stranger = await Invite.create(fresh.url).ready();
@@ -647,8 +648,24 @@ test("the Deploy-button path: a fresh relay is claimed by the first chamber; the
     await run(["join", `${fresh.url}/#${key}`, "--as", "nitin"], { home: mate });
     assert.match((await run(["invite"], { home: mate })).stderr, /only your chamber's admin/);
     const config = JSON.parse(readFileSync(join(mate, "config.json"), "utf8"));
-    const nitin = await join_(await Invite.parse(config.invite).ready(), "nitin/board", { kind: "human", listens: true });
+    // A verified chamber: the teammate's app asks to join, and waits for the admin's app (or
+    // `chamber approve`) to certify it and hand over the keys.
+    const nitin = new LineClient(await Invite.parse(config.invite).ready(), "nitin/board", { kind: "human", listens: true });
+    clients.add(nitin);
+    nitin.run();
+    for (let i = 0; i < 100 && !/waiting for the chamber's admin/.test(nitin.problem || ""); i++) await sleep(100);
+    assert.match(nitin.problem, /waiting for the chamber's admin to let you in/);
+    const approved = await run(["approve"], { home: lineHome, env: admin });
+    assert.match(approved.stdout, /Let in nitin\./, approved.stderr);
+    await nitin.ready(20000);
     assert.equal(nitin.connected, true, "the teammate is in");
+    assert.equal(nitin.lineVersion, 3);
+    for (let i = 0; i < 100 && nitin.epochs.current !== 1; i++) await sleep(100);
+    assert.equal(nitin.epochs.current, 1, "the admin handed over the chamber's key");
+    assert.match((await run(["members"], { home: lineHome, env: admin })).stdout, /Verified chamber/);
+    // Removing a teammate always hands everyone else a new key.
+    const removed = await run(["revoke", "nitin"], { home: lineHome, env: admin });
+    assert.match(removed.stdout, /Everyone else has a new key \(epoch 2\)/, removed.stderr);
     nitin.close();
   } finally {
     fresh.stop();

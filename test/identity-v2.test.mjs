@@ -120,8 +120,12 @@ test("setup: a v2 chamber, two enrolled members, signed happy path", async () =>
 });
 
 test("1. impersonation and name binding: a certificate is one member, one name, one key", async () => {
-  // ashish's certificate cannot join as nitin: the CLIENT refuses at construction...
-  assert.throws(() => new LineClient(alice.invite, "nitin/board"), /certificate is for ashish/);
+  // ashish's certificate cannot join as nitin: the CLIENT refuses (without throwing: an app
+  // holding a stale name must still open and say why)...
+  const misnamed = await tryJoin(alice.invite, "nitin/board");
+  assert.equal(misnamed.connected, false);
+  assert.match(misnamed.problem, /certificate is for ashish/);
+  misnamed.close();
   // ...and the RELAY refuses a bare socket that tries the same (no client-side guard helping it).
   const refusal = await new Promise((resolve) => {
     const ws = new WebSocket(lineX.wsUrl, { headers: lineX.auth });

@@ -175,11 +175,27 @@ test("2. ciphertext-only views: the shared key and the relay's rows open nothing
 
 test("3. distribution authenticity: forged, tampered and stale distributions are ignored", async () => {
   const before = alice.client.epochs;
-  // A distribution whose payload is signed by a MEMBER's key, not the admin's: ignored, even
-  // though the transport frame itself is properly signed by that member.
+  // A distribution whose payload is signed by a MEMBER's key, not the admin's: the relay refuses
+  // it (epoch 0 carries only admin-signed distributions), and clients would ignore it anyway.
   const evilKey = epochLib.generateEpochKey();
-  await bob.client.sendDistribution(bob.key.private, 7, evilKey, wrapSet(alice));
-  await sleep(1200);
+  await assert.rejects(bob.client.sendDistribution(bob.key.private, 7, evilKey, wrapSet(alice)), /epoch 0 carries only the admin's signed key distributions/);
+  // Nor may a member ride epoch 0 with an ordinary message.
+  const sneaky = hex32();
+  const frameAt0 = { line: lineX.lineId, from: "nitin/board", to: "*", id: sneaky, replyTo: "", ts: Date.now(), epoch: 0, mentions: [] };
+  const body0 = await lineX.seal({ text: "shared-key text" }, { sender: "nitin/board", to: "*", id: sneaky, replyTo: null });
+  const refusal = await new Promise((resolve) => {
+    const prior = bob.client.ws.onmessage;
+    bob.client.ws.onmessage = (event) => {
+      const f = JSON.parse(String(event.data));
+      if (f.t === "error" && f.id === sneaky) {
+        bob.client.ws.onmessage = prior;
+        resolve(f.error);
+      } else prior(event);
+    };
+    bob.client.ws.send(JSON.stringify({ t: "send", id: sneaky, to: "*", body: body0, blobs: [], mentions: [], ts: frameAt0.ts, epoch: 0, sig: identity.signEnvelope(bob.key.private, { ...frameAt0, hash: identity.bodyHash(body0) }) }));
+  });
+  assert.match(refusal, /epoch 0 carries only/);
+  await sleep(300);
   assert.equal(alice.client.epochs.current, before.current, "a member-signed distribution installs nothing");
   assert.equal(alice.client.epochs.keys["7"], undefined);
   // A tampered wrap (the admin's signature no longer matches): ignored.
@@ -190,7 +206,7 @@ test("3. distribution authenticity: forged, tampered and stale distributions are
   const id = hex32();
   const ts = Date.now();
   const sealed = await lineX.seal(payload, { sender: "ashish/board", to: "*", id, replyTo: null });
-  await alice.client.testFrame({ t: "msg", seq: 91001, id, from: "ashish/board", to: "*", to_owner: null, reply_to: null, body: sealed, ts, epoch: 0, sig: identity.signEnvelope(alice.key.private, { line: lineX.lineId, from: "ashish/board", to: "*", id, replyTo: "", ts, hash: identity.bodyHash(sealed) }) });
+  await alice.client.testFrame({ t: "msg", seq: 91001, id, from: "ashish/board", to: "*", to_owner: null, reply_to: null, body: sealed, ts, epoch: 0, sig: identity.signEnvelope(alice.key.private, { line: lineX.lineId, from: "ashish/board", to: "*", id, replyTo: "", ts, hash: identity.bodyHash(sealed), epoch: 0, mentions: [] }) });
   assert.equal(alice.client.epochs.keys["7"], undefined, "a tampered distribution installs nothing");
   // A legitimately signed re-distribution of an OLD epoch never rolls the current epoch back.
   await alice.client.sendDistribution(admin.private, 1, E1, wrapSet(alice, bob));

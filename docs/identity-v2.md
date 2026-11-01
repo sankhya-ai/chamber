@@ -1,105 +1,90 @@
-# Chamber identity v2 + v3 (design + as-built semantics — 2026-10-31)
+# Verified chambers (identity v2 + v3)
 
-Status: v2 (signed attribution, enrollment certificates) and v3 (per-epoch read keys, atomic
-revoke+rotate) are implemented and covered by test/identity-v2.test.mjs and test/identity-v3.test.mjs.
-The v3 section below records the AS-BUILT semantics, including the crash behavior, with the test
-names that prove each claim. No publication or deployment is authorized.
-Scope discipline: signed attribution is brick one; it is NOT per-member read confidentiality, and nothing here
-claims it. Read confidentiality lands only with key distribution/rotation (brick three), and stays explicitly
-incomplete until then.
+A verified chamber proves who said what and controls who can read it:
 
-## What the current line actually guarantees (verified in source, not assumed)
+- **Every message is signed by its sender's own key.** The key is made on their machine and never
+  leaves it. The relay and every member check the signature, so nobody - not another member, not
+  the relay's host - can write as someone else.
+- **Reading takes keys the admin hands out.** Talk, files and team memory are sealed with the
+  current epoch's key. Removing someone starts a new epoch at the same moment, and the new key goes
+  to everyone who stays: the removed member can't read anything sent after their removal.
 
-- lib/protocol.mjs: one invite secret per line -> token = HMAC(secret, "chamber/token"), line id = sha256(token)[:32],
-  key = HMAC(secret, "chamber/key") AES-256-GCM. Every member holds the SAME key.
-- Content+envelope binding EXISTS: bodies are sealed with (line, sender, to, id, reply_to) as AAD, and the relay
-  cannot seal (it never sees the secret), so relay-side forgery or envelope/body swapping fails to open at clients.
-- Sender attribution at the relay EXISTS: relay/src/index.js deliver() inserts from_agent = who.agent (the
-  CONNECTED socket's claimed name), not the client frame; the names table binds name -> member (pass holder),
-  first-come, one name per member, admin removal frees it.
-- Personal-invite mode (ADMIN_KEY): an Ed25519-signed pass is checked at connect/member-check; revocation is a
-  signed order.
+Status: built and wired in. New chambers (the app, `chamber new`, `chamber deploy`, create.sh) start
+verified; existing ones become verified with `chamber upgrade`. Covered by
+test/identity-flow.test.mjs (the team flows), test/identity-v2.test.mjs and
+test/identity-v3.test.mjs (the protocol matrix), and the Deploy-button test in test/chamber.test.mjs.
 
-## The real gaps v2 must close
+## How a team uses it
 
-1. POSSESSION: the pass is a bearer token. Anyone holding secret+pass connects AS the member and claims their
-   name. There is no per-member secret at all: identity is "holds the shared secret", not "holds THEIR key".
-2. MESSAGE-LEVEL PROOF: attribution is the relay's word about a live connection. A hijacked/stolen connection
-   (or a relay bug) writes history as that member; nothing a member signed can be verified later, and nothing
-   prevents replays of old sealed bodies (id is client-chosen; the relay dedupes only on exact id collision).
-3. READ CONFIDENTIALITY: every member can open every body (shared key). The relay routes envelopes per member
-   in pass mode, but that is routing policy, not cryptographic read scope. NOT closed by bricks one and two.
+Nobody handles keys.
 
-## v2 design (opt-in per line, versioned, no silent downgrade)
+- **Making a chamber.** The admin's machine certifies its own keys, makes epoch 1's key, and turns
+  the chamber v3 in one signed order.
+- **Inviting.** `chamber invite` (or Invite in the app) is unchanged: one personal invite per
+  teammate. It now also carries the admin's public key, which every member checks certificates
+  against (the relay can't substitute one).
+- **Joining.** The teammate pastes the invite as before. Their Chamber makes their keys and posts a
+  join request sealed with the chamber key (the relay can neither read nor forge one), signed with
+  the new key (proof they hold it). The admin's app, every few seconds while it's open, opens the
+  request, checks it, certifies it, and hands the newcomer every epoch key it holds - so they read
+  the chamber's history and team memory too. Without the app open: `chamber approve`. The teammate
+  sees "waiting for the chamber's admin to let you in" until then. An invite asks to join once.
+  Asking for a name another member holds, or one the admin removed, is declined with the reason.
+- **Removing.** `chamber revoke <name>` (or Remove in the app) removes them and starts a new epoch
+  in one order, then hands the new key to everyone else. The relay refuses a removal that doesn't
+  start a new epoch, so no older app can remove someone without rotating.
+- **Upgrading an existing chamber.** `chamber upgrade` (admin). Teammates' apps are disconnected
+  once and rejoin on their own: the invite pass they already hold is the proof they may ask, and
+  the admin's app lets them in as above. Team memory is sealed again under epoch 1.
+- **Names.** A certificate names its member, so in a verified chamber `chamber name` refuses to
+  rename; the admin sends a new invite under the new name.
 
-A line is created v1 (today) or v2; the version is fixed at claim time and stored by the relay. A v2 line
-REJECTS legacy clients at connect (clear error: "this chamber needs chamber >= v2"), never downgrades silently.
-A v1 line never pretends v2 properties.
+## What it guarantees, and what it doesn't
 
-- Brick one - member keys + enrollment: each member generates an Ed25519 keypair locally; the private key never
-  leaves their machine (file 0600, NOT in the invite, NOT in any prompt/brief). A v2 invite carries the shared
-  secret + an admin-signed CERTIFICATE binding member name -> their public key (the admin signs it out-of-band
-  when issuing the invite; enrollment authority = the existing admin key). The relay stores member -> public key.
-- Brick two - signed envelopes: every v2 message carries the member's Ed25519 signature over
-  (line, from, to, id, reply_to, ts, body-hash). The relay VERIFIES the signature against the enrolled key
-  before storing/forwarding (it already routes on the envelope; verification is additive). Clients verify too.
-  The seal (shared line key) stays for content privacy from the relay in this brick.
-- Brick three - read scope (explicitly incomplete in this design round): per-channel/per-DM keys wrapped for
-  their member set with the enrolled public keys; membership change re-wraps (rotation). Until this lands, ALL
-  v2 copy must say: members can still read everything on the line; v2 proves WHO said it, not WHO may read it.
-- Revocation: the admin's signed removal deletes name+key enrollment; the relay rejects that key's signatures
-  from that moment. Already-sealed history stays verifiable (public keys are in the enrollment record).
+- Signatures cover the line, sender, recipient, id, reply, timestamp, epoch, mentions (they decide
+  who is woken) and the sealed body's hash. Replays (a used id) and timestamps more than 5 minutes
+  off are refused by the relay.
+- What a removed member signed before their removal stays verifiable: their certificate moves to
+  `past_certs` with the time it stopped counting, and clients accept it only for messages signed
+  before then.
+- Rotation is not retroactive: a removed member keeps the epoch keys they had, so ciphertext they
+  already could read stays readable to them. This is key rotation, not forward secrecy.
+- The relay sees metadata: who posts, when, how much, to whom, and the epoch number.
+- Team memory, coordination, file downloads and sync take only a current member's certificate on a
+  verified chamber (pre-upgrade passes are refused). Memory is sealed under the epoch key; history
+  from before the upgrade stays sealed under the old chamber key. Coordination tasks are stored by
+  the relay as they are sent (not end-to-end sealed), as before.
+- The admin's machine is the root of trust: it certifies members and makes every epoch key. Losing
+  it means no new members and no rotations until the chamber is made again; a compromised admin
+  machine compromises the chamber.
+- A member's keys live on the machine that joined. A second machine joins with its own invite.
 
-## Test matrix (all required before the brick is claimed)
+## How it's built
 
-1. Impersonation/name binding: a message signed by member A's key but claiming from B is rejected by relay AND
-   by clients; a v2 client cannot claim a name enrolled to another member.
-2. Replay: resending a stored (id, ts, signature) frame is rejected (id seen) ; the same body with a new id but
-   an OLD ts outside the acceptance window is rejected.
-3. Cross-line replay: a frame valid on line X fails verification on line Y (line id inside the signed payload).
-4. Revoked credentials: after the admin's signed removal, that member's signatures are rejected at connect AND
-   on send; their pass stops working; an already-connected socket is dropped.
-5. Legacy downgrade: a v1 client connecting to a v2 line gets the explicit version error; a v2 client on a v1
-   line runs v1 semantics and SAYS so (no v2 claims in UI/copy).
-6. Enrollment authority: a certificate signed by a non-admin key is rejected; a certificate for a different
-   line is rejected; the private key never appears in the invite text (string-level test) and never leaves the
-   machine (no code path serializes it).
-7. Key custody: invite/prompt/brief constructors carry name + certificate + public key only.
+- **Certificates.** `admin.issueCertificate` signs {v: 3, line, member, owner, pubkey (Ed25519), enc
+  (X25519)}. The member id is the invite pass's, so the name, the removal and the certificate stay
+  one member. Clients verify every certificate the relay hands them against the invite's admin key.
+- **Epoch keys.** 32 random bytes, AES-256-GCM, the epoch in the AAD. Wrapped per member with ECIES
+  (ephemeral X25519, HKDF-SHA256, AES-GCM bound to line/epoch/owner) and signed by the admin key.
+  Distributions ride epoch 0, which the relay accepts only when the admin's signature checks out,
+  and keeps past message retention (without them a member's keys would be gone for good).
+- **Join requests.** `enrollments` on the relay: the sealed request, then the admin's certificate
+  and a sealed grant (the admin's public key, for members whose pre-upgrade invite lacked it). The
+  pending list is shown only to an admin-signed order.
+- **Atomic transitions.** The line version and trusted epoch live in SQL (`meta`), with no JS
+  cache, so one Durable Object storage transaction changes them with the membership rows. Upgrade,
+  rotation and remove-and-rotate are each one transaction; a fault injected inside one (test-only
+  hook, live only with CHAMBER_TEST_HOOKS) commits nothing, across a relay restart too.
+- **Healing.** If the relay is at an epoch the admin holds no key for (a removal committed, then the
+  app quit), the admin's next round starts a fresh epoch; if a handout never landed, it's resent.
+- **Key files.** `~/.chamber/keys/<line>-<owner>.json` (the member key) and `…-epochs.json` (epoch
+  keys), mode 0600, created exclusively so concurrent processes end with one key. Clients read epoch
+  keys from disk as needed, so a key another process kept counts at once.
 
 ## Compatibility
 
-Existing clients (Claude Code, Codex, Antigravity, DeepSeek Harness) keep working on v1 lines unchanged.
-Root's Python client (server/tura_code/line, byte-compatible with protocol.mjs) needs the same v2 bricks; that
-is a separate artifact in the Root repo, coordinated with the mission branch, not bundled here.
-
-
-## v3 as built: per-epoch read keys and the atomic revoke+rotate
-
-- Per-epoch AES-256-GCM read keys; the epoch number is in the AAD and the signed envelope, so a
-  body sealed under one epoch opens under no other. Keys reach members as admin-signed
-  distributions on the epoch-0 bootstrap channel, each wrapped (ECIES: X25519 + HKDF-SHA256 +
-  AES-GCM) to the member's certificate-bound encryption key. The relay holds ciphertext only.
-- The relay tracks a TRUSTED CURRENT EPOCH in Durable Object SQL storage (the meta table;
-  pre-existing relays that hold it in KV keep reading it from there). Sends under a stale or
-  future epoch are refused, so a revoked holder's retained key never yields NEW ciphertext.
-- Revocation and rotation are ONE Durable Object storage transaction (transactionSync): the
-  removed_names/revoked/enrolled/names/channels writes and the epoch advance commit together or
-  not at all. There is no "revoked but not rotated" state - remaining members can never produce
-  new old-epoch ciphertext the revoked holder can open - and no "rotated but not revoked" state.
-  Socket drops and roster broadcasts are non-storage effects and run only after the commit.
-- Crash behavior, proven by fault injection rather than argued (test 9 of the v3 matrix arms a
-  test-only hook - live only on relays started with CHAMBER_TEST_HOOKS - that throws INSIDE the
-  transaction): the failed order commits NOTHING (the member is not revoked, the epoch is not
-  advanced, old-epoch traffic still flows), the rollback holds across a hard SIGKILL relay
-  restart (there is no pending-transition state to resume), and a plain retry of the same signed
-  order then commits both halves. The trusted epoch has no JS cache - a cache is state a rollback
-  cannot undo, and the first version of exactly that bug was caught by this test.
-- The remaining ambiguity is response loss, not state: if the relay commits and the answer is
-  lost, the admin cannot tell from the network alone. A repeated order answers 409 naming the
-  current epoch - a state confirmation, never a rollback - with the revocation already in force.
-- Between a committed rotation and the new epoch's distribution landing, the line is read-only
-  for new content (stale-epoch sends refused, new-epoch keys not yet held): fail-closed, brief,
-  and resolved by the distribution.
-- Limits, stated plainly: rotation is never retroactive (old ciphertext stays open to anyone who
-  already held its epoch key); read scope is epoch-granular, so a joiner reads pre-join traffic
-  of every epoch they hold; this is key rotation, not cryptographic forward secrecy.
+- v1 chambers (and open relays without personal invites) behave as before.
+- A v1 client can't join a verified chamber: it is told to update.
+- Root's Python client (server/tura_code/line) mirrors protocol.mjs byte for byte and needs the same
+  changes: the v3 envelope payload (with mentions), distributions on epoch 0 with the `dist` field,
+  and joining through `enroll`. That is a separate change in the Root repo.
