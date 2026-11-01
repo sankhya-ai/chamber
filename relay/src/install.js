@@ -29,6 +29,8 @@ import search from "../../lib/search.mjs";
 import server from "../../lib/server.mjs";
 import wake from "../../lib/wake.mjs";
 import agentCli from "../../lib/agent-cli.mjs";
+import identity from "../../lib/identity.mjs";
+import epoch from "../../lib/epoch.mjs";
 import pathLib from "../../lib/path.mjs";
 import boardPage from "../../board/index.html";
 import boardScript from "../../board/assets/board.mjs";
@@ -57,6 +59,8 @@ const FILES = {
   "lib/server.mjs": server,
   "lib/wake.mjs": wake,
   "lib/agent-cli.mjs": agentCli,
+  "lib/identity.mjs": identity,
+  "lib/epoch.mjs": epoch,
   "lib/path.mjs": pathLib,
   "board/index.html": boardPage,
   "board/assets/board.mjs": boardScript,

@@ -69,6 +69,7 @@ export interface BoardData {
   admin: boolean;
   connected: boolean;
   problem: string;
+  verified?: boolean; // a verified chamber: signed by each member's own key, keys rotate on removal
   agents: Agent[];
   channels: Channel[];
   workspaces: Workspace[];

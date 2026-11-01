@@ -142,9 +142,13 @@ export function Sidebar({
               CF {data.quota.requestsPercentage}%
             </span>
           ) : null}
-          <span className={cn("size-2 rounded-full", data?.connected ? "bg-online" : "bg-waiting")} title={data?.connected ? "Connected" : data?.problem || "Connecting…"} />
+          <span className={cn("size-2 rounded-full", data?.connected ? "bg-online" : "bg-waiting")} title={data?.connected ? (data.verified ? "Connected · verified chamber" : "Connected") : data?.problem || "Connecting…"} />
         </div>
       </div>
+      {/* Joining a verified chamber waits for the admin's app; say so where it's seen, not in a tooltip. */}
+      {!data?.connected && /admin/.test(data?.problem || "") ? (
+        <p className="mx-3 mb-2 rounded-md bg-muted px-2.5 py-2 text-[11px] leading-snug text-muted-foreground">{data?.problem}</p>
+      ) : null}
 
       <nav className="scroll-thin flex-1 overflow-y-auto">
         <Row
