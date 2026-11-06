@@ -1,7 +1,7 @@
 #!/bin/sh
 # Make your own chamber, in one command (for the admin: the person who invites the team):
 #
-#   curl -fsSL https://raw.githubusercontent.com/tura-learn/chamber/main/create.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/sankhya-ai/chamber/main/create.sh | sh
 #
 # Run it inside your project. It deploys your relay to your Cloudflare account (free plan),
 # makes a chamber, joins you, puts this project's Claude Code in it, and prints the one
@@ -13,7 +13,7 @@ set -e
 NAME="${1:-}"
 HOME_DIR="${CHAMBER_HOME:-$HOME/.chamber}"
 SRC="$HOME_DIR/src"
-REPO="${CHAMBER_REPO:-https://codeload.github.com/tura-learn/chamber/tar.gz/refs/heads/main}"
+REPO="${CHAMBER_REPO:-https://codeload.github.com/sankhya-ai/chamber/tar.gz/refs/heads/main}"
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 fail() { printf '\nchamber: %s\n' "$*" >&2; exit 1; }
 

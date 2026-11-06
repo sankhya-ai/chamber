@@ -2,7 +2,7 @@
 # Host your chamber's relay on your own Linux machine: a VM (e.g. Maritime), a server, a spare box.
 # The other way to host it is your Cloudflare account (the app sets that up for you).
 #
-#   curl -fsSL https://raw.githubusercontent.com/tura-learn/chamber/main/vm.sh | sudo DOMAIN=relay.example.com bash
+#   curl -fsSL https://raw.githubusercontent.com/sankhya-ai/chamber/main/vm.sh | sudo DOMAIN=relay.example.com bash
 #
 # With DOMAIN (its DNS pointing at this machine, ports 80 and 443 open) you get HTTPS from Let's Encrypt
 # through Caddy. Without it the relay answers plain HTTP on port 8787: fine to try, but the chamber's
@@ -23,7 +23,7 @@ SRC=/opt/chamber
 DATA=/var/lib/chamber-relay
 BACKUPS=/var/backups/chamber-relay
 NODE_VERSION=22.20.0
-REPO="${CHAMBER_REPO:-https://codeload.github.com/tura-learn/chamber/tar.gz/refs/heads/main}"
+REPO="${CHAMBER_REPO:-https://codeload.github.com/sankhya-ai/chamber/tar.gz/refs/heads/main}"
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 fail() { printf '\nchamber: %s\n' "$*" >&2; exit 1; }
 

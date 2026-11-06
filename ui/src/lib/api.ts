@@ -159,7 +159,7 @@ export const api = {
   addChamber: () => post<{ ok: boolean }>("/api/board/chambers/add"),
   cancelAddChamber: () => post<{ ok: boolean }>("/api/board/chambers/cancel-add"),
   renameChamber: (name: string) => post<{ ok: boolean }>("/api/board/chambers/rename", { name }),
-  invite: () => request<{ command: string; code?: string }>("/api/board/invite"),
+  invite: (message = false) => request<{ command: string; code?: string; message?: string; expires?: number | null }>(`/api/board/invite${message ? "?message=1" : ""}`),
   memory: () => request<{ files: { path: string; version: number; author: string; ts: number }[] }>("/api/board/memory"),
   memoryFile: (path: string, version = 0) => request<{ path: string; version: number; text: string | null }>(`/api/board/memory/file?path=${encodeURIComponent(path)}${version ? `&version=${version}` : ""}`),
   saveMemoryFile: (path: string, text: string, message?: string, base?: number) =>

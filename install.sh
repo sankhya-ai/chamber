@@ -2,7 +2,7 @@
 # Chamber — Single-command installation for developers and their coding agents
 #
 # Usage:
-#   git clone https://github.com/tura-learn/chamber.git
+#   git clone https://github.com/sankhya-ai/chamber.git
 #   cd chamber
 #   ./install.sh
 set -e

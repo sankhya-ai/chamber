@@ -44,14 +44,22 @@
 // HOSTED_SECRET (POST /v1/hosted/billing). A chamber past its trial without a plan can still be
 // managed by its admin, but its members can't connect until it's paid.
 //
+// Join tickets (relay v8): a one-time, expiring invite. The admin seals a teammate's invite with a
+// key that never reaches the relay (it rides in the link's #fragment) and stores the sealed copy
+// here; the first POST to /v1/join/<line>/<id> takes it and burns it. A leaked invite message is
+// useless once used, and a link preview (a GET) never uses it up.
+//
 // Knocks: a message to an agent that isn't connected also sends its owner's boards a knock
 // ({t: "knock", id, from, to, ts}, no content), so the owner's app can wake that agent if the
 // owner allows the sender to.
 
+import { guide } from "./guide.js";
 import { install } from "./install.js";
 
 /** Bumped when the relay changes, so a client can tell which code answered. */
-const RELAY_VERSION = 6;
+const RELAY_VERSION = 8;
+const TICKET = /^[0-9a-f]{32}$/;
+const TICKET_MAX_MS = 7 * 24 * 3600 * 1000;
 const RETENTION_MS = 30 * 24 * 3600 * 1000;
 const MAX_ROWS = 50000;
 const MAX_BODY = 900_000;
@@ -73,6 +81,10 @@ const hosted = (env) => String(env.HOSTED || "") === "1";
 const MAX_MEMORY_FILE = 400_000; // sealed, base64
 const MAX_MEMORY_FILES = 2000;
 const MEMORY_PATH = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,199}\.md$/;
+// Desks (desks/<owner>/<agent>.md): each agent's live state, rewritten as it works. Only the latest
+// version is kept, and commits that only moved desks are dropped after a day, so they never pile up.
+const DESKS = "desks/";
+const DESK_HISTORY_MS = 24 * 3600 * 1000;
 
 /**
  * How long a relay keeps what it holds. Cloudflare's free plan is the default: messages for
@@ -107,8 +119,20 @@ export default {
     // `files`: whether this relay can hold files too big for a message (the optional R2 binding).
     if (url.pathname === "/v1/relay") return json(hosted(env) ? { claimed: false, hosted: true, files: Boolean(env.BLOBS), relay: RELAY_VERSION } : { claimed: (await relayConfig(env)).claimed, files: Boolean(env.BLOBS), relay: RELAY_VERSION });
     if (url.pathname.startsWith("/v1/hosted/")) return hostedApi(request, env, url);
-    const served = install(url);
+    const served = install(url) ?? guide(url);
     if (served) return served;
+
+    // Join tickets: a person who opens the link sees what it is; an installer redeems it (once).
+    const ticketPage = url.pathname.match(/^\/join\/([0-9a-f]{32})\.([0-9a-f]{32})$/);
+    if (ticketPage && request.method === "GET") return joinPage(url);
+    const redeem = url.pathname.match(/^\/v1\/join\/([0-9a-f]{32})\/([0-9a-f]{32})$/);
+    if (redeem) {
+      if (request.method !== "POST") return json({ error: "POST to use an invite" }, 405);
+      const [, line, ticket] = redeem;
+      const config = hosted(env) ? { lines: [] } : await relayConfig(env);
+      if (config.lines.length && !config.lines.includes(line)) return json({ error: "this relay serves only its own chambers" }, 403);
+      return env.LINES.get(env.LINES.idFromName(line)).fetch(new Request("https://line/ticket-redeem", { method: "POST", headers: { "x-line": line, "x-ticket": ticket } }));
+    }
 
     // Mobile approval routes: /gate/:line/:gateId or /gate/:gateId?line=:line
     const mobileLineGateMatch = url.pathname.match(/^\/gate\/([0-9a-f]{32})\/([0-9a-f]{16,64})$/i);
@@ -135,7 +159,7 @@ export default {
       return json({ error: "line required for gate review" }, 400);
     }
 
-    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|poll(?:\/(?:open|send|close))?|roster|members|admin|sync|coordination(?:\/[a-zA-Z0-9_-]+)?|memory(?:\/(?:file|commit|history))?|gates(?:\/([0-9a-f]{16,64}))?|gate\/([0-9a-f]{16,64})|restart|blobs\/([^/]+))$/);
+    const match = url.pathname.match(/^\/v1\/lines\/([^/]+)\/(ws|poll(?:\/(?:open|send|close))?|roster|members|admin|quota|tickets|sync|coordination(?:\/[a-zA-Z0-9_-]+)?|memory(?:\/(?:file|commit|history))?|gates(?:\/([0-9a-f]{16,64}))?|gate\/([0-9a-f]{16,64})|restart|blobs\/([^/]+))$/);
     if (!match) return json({ error: "not found" }, 404);
     const [, line, what, , , blob] = match;
     const token = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
@@ -253,6 +277,14 @@ function landing(url, config) {
   );
 }
 
+/** What a person sees when they open a join link: it is for their coding agent or the app. */
+function joinPage(url) {
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Chamber invite</title><style>body{font:15px/1.6 -apple-system,system-ui,sans-serif;max-width:640px;margin:12vh auto;padding:0 20px;color:#1b1c1f;background:#f6f5f1}h1{font-size:22px}code{background:#fff;border:1px solid #e4e4e1;border-radius:6px;padding:1px 5px}@media(prefers-color-scheme:dark){body{background:#0a0a0c;color:#ebecee}code{background:#16171a;border-color:#26272b}}</style><h1>You're invited to a chamber</h1><p>This link is a one-time invite to your team's Chamber. Opening it here doesn't use it.</p><p><b>Easiest:</b> paste the whole message you got into Claude Code or Codex. Your agent sets everything up and tells you when it's done.</p><p><b>Or</b> open the Chamber app, choose <i>Join a chamber</i> and paste the link.</p><p>The invite works once. If it says it was used or has expired, ask whoever invited you for a new one.</p>`,
+    { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
+  );
+}
+
 async function blobs(request, env, line, blob, config = null, stub = null) {
   if (!env.BLOBS) return json({ error: "this relay has no file storage; send smaller files" }, 501);
   if (!BLOB.test(blob)) return json({ error: "bad blob id" }, 400);
@@ -354,6 +386,8 @@ export class Line {
     this.sql.exec("CREATE TABLE IF NOT EXISTS revoked (member TEXT PRIMARY KEY, at INTEGER NOT NULL)");
     // Names the admin removed: refused from then on, even for someone who never had a pass.
     this.sql.exec("CREATE TABLE IF NOT EXISTS removed_names (owner TEXT PRIMARY KEY, at INTEGER NOT NULL)");
+    // Join tickets: sealed invites, each usable once (see the top of this file).
+    this.sql.exec("CREATE TABLE IF NOT EXISTS tickets (id TEXT PRIMARY KEY, sealed TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, used INTEGER)");
     // Team memory.
     this.sql.exec("CREATE TABLE IF NOT EXISTS mem_files (path TEXT PRIMARY KEY, version INTEGER NOT NULL, body TEXT NOT NULL, author TEXT NOT NULL, ts INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS mem_versions (path TEXT NOT NULL, version INTEGER NOT NULL, body TEXT, PRIMARY KEY (path, version))");
@@ -609,6 +643,8 @@ export class Line {
       await this.ctx.storage.put("line", line); // the alarm may wake in a fresh instance
     }
     this.recordUsage(1);
+    if (what === "ticket-redeem") return this.redeemTicket(request.headers.get("x-ticket") || "");
+    if (what === "tickets") return this.createTicket(request);
     if (what === "quota" || what === "stats") return json(this.quota());
     if (what === "roster") return json({ agents: this.roster() });
     if (what === "members") {
@@ -708,6 +744,9 @@ export class Line {
       return this.handleGate(what, request);
     }
     if (what === "coordination" || what.startsWith("coordination/")) {
+      // Members only, like memory: a removed teammate still holds the chamber's token.
+      const refused = await this.memberCheck(request.headers.get("x-chamber-pass"));
+      if (refused) return json({ error: refused }, 403);
       return this.handleCoordination(what, request);
     }
     if (what === "poll" || what.startsWith("poll/")) return this.poll(what, request);
@@ -797,6 +836,44 @@ export class Line {
   // ----- team memory -------------------------------------------------------------------
 
   /** With personal invites, memory is for members only: a valid, unrevoked pass. */
+  /** A member stores a sealed invite for one teammate; with personal invites only the admin may. */
+  async createTicket(request) {
+    if (request.method !== "POST") return json({ error: "POST" }, 405);
+    const refused = await this.memberCheck(request.headers.get("x-chamber-pass"));
+    if (refused) return json({ error: refused }, 403);
+    const body = await request.json().catch(() => ({}));
+    const id = String(body.id || "");
+    const sealed = String(body.sealed || "");
+    if (!TICKET.test(id) || !sealed || sealed.length > 8192) return json({ error: "a ticket needs an id and a sealed invite" }, 400);
+    const adminKey = await this.adminKey();
+    const line = this.line || (await this.ctx.storage.get("line"));
+    if (adminKey) {
+      const claims = await signedByAdmin(adminKey, body.order);
+      if (!claims || claims.op !== "ticket" || claims.line !== line || claims.id !== id) return json({ error: "only the chamber's admin invites people" }, 403);
+    }
+    const now = Date.now();
+    this.sql.exec("DELETE FROM tickets WHERE expires < ?", now - 24 * 3600 * 1000);
+    if (this.sql.exec("SELECT COUNT(*) AS n FROM tickets WHERE used IS NULL AND expires > ?", now).toArray()[0].n >= 200) return json({ error: "too many open invites: wait for some to be used or expire" }, 429);
+    const expires = now + Math.min(TICKET_MAX_MS, Math.max(60_000, Number(body.ttlMs) || 3 * 24 * 3600 * 1000));
+    try {
+      this.sql.exec("INSERT INTO tickets (id, sealed, created, expires) VALUES (?, ?, ?, ?)", id, sealed, now, expires);
+    } catch {
+      return json({ error: "that ticket exists" }, 409);
+    }
+    return json({ ok: true, id, expires }, 201);
+  }
+
+  /** Hand out a ticket's sealed invite once; afterwards (or past its expiry) it is gone. */
+  redeemTicket(id) {
+    if (!TICKET.test(id)) return json({ error: "not an invite" }, 400);
+    const row = this.sql.exec("SELECT sealed, expires, used FROM tickets WHERE id = ?", id).toArray()[0];
+    if (!row) return json({ error: "no such invite: check you copied the whole link, or ask for a new one" }, 404);
+    if (row.used) return json({ error: "this invite was used already: ask whoever invited you for a new one" }, 410);
+    if (row.expires < Date.now()) return json({ error: "this invite has expired: ask whoever invited you for a new one" }, 410);
+    this.sql.exec("UPDATE tickets SET used = ?, sealed = '' WHERE id = ?", Date.now(), id);
+    return json({ sealed: row.sealed, expires: row.expires });
+  }
+
   async memberCheck(pass) {
     const adminKey = await this.adminKey();
     if (!adminKey) return null;
@@ -861,7 +938,19 @@ export class Line {
       else this.sql.exec("INSERT OR REPLACE INTO mem_files (path, version, body, author, ts) VALUES (?, ?, ?, ?, ?)", c.path, to, c.body, author, now);
       applied.push({ path: c.path, from: Number(c.base || 0), to, deleted: c.body === null });
     }
+    for (const a of applied) if (a.path.startsWith(DESKS)) this.sql.exec("DELETE FROM mem_versions WHERE path = ? AND version < ?", a.path, a.to);
+    const deskOnly = applied.every((a) => a.path.startsWith(DESKS));
     const row = this.sql.exec("INSERT INTO mem_commits (author, message, changes, ts) VALUES (?, ?, ?, ?) RETURNING seq", author, String(commit.message || "").slice(0, 500), JSON.stringify(applied), now).toArray()[0] ?? { seq: 0 };
+    if (deskOnly) {
+      const old = this.sql.exec("SELECT seq, changes FROM mem_commits WHERE ts < ? AND message LIKE 'desk:%' AND seq < ? LIMIT 500", now - DESK_HISTORY_MS, row.seq).toArray();
+      for (const r of old) {
+        let paths = [];
+        try {
+          paths = JSON.parse(r.changes).map((c) => String(c.path || ""));
+        } catch {}
+        if (paths.length && paths.every((p) => p.startsWith(DESKS))) this.sql.exec("DELETE FROM mem_commits WHERE seq = ?", r.seq);
+      }
+    }
     const frame = JSON.stringify({ t: "memory", head: row.seq, author, changes: applied });
     for (const { ws } of this.members()) this.send(ws, frame);
     return json({ ok: true, seq: row.seq, changes: applied });

@@ -58,24 +58,40 @@ export function ChannelDialog({ open, onOpenChange, data, onJoined }: {
   );
 }
 
-/** The admin's join command for a teammate. */
+/** The admin's invite for one teammate: a message they paste into Claude Code or Codex (which sets Chamber up), or just the link for the app. */
 export function InviteDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const [command, setCommand] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [message, setMessage] = useState("");
+  const [code, setCode] = useState("");
+  const [copied, setCopied] = useState("");
   useEffect(() => {
-    if (open) api.invite().then((r) => setCommand(r.code || r.command), (e) => setCommand(String(e.message)));
+    if (!open) return;
+    setMessage("");
+    setCode("");
+    api.invite(true).then(
+      (r) => {
+        setMessage(r.message || r.code || r.command);
+        setCode(r.code || r.command);
+      },
+      (e) => setMessage(String(e.message)),
+    );
   }, [open]);
+  const copy = (what: string, text: string) => void navigator.clipboard.writeText(text).then(() => (setCopied(what), setTimeout(() => setCopied(""), 1500)));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Invite a teammate</DialogTitle>
-          <DialogDescription>A personal invite code for one teammate: send it to them privately. They open Chamber, choose "Join a chamber" and paste it. Each time you open this, it makes a new one.</DialogDescription>
+          <DialogDescription>Send this to one teammate, privately. They paste it into Claude Code or Codex, and their agent sets Chamber up for them. The link inside works once. Each time you open this, it makes a new one.</DialogDescription>
         </DialogHeader>
-        <pre className="overflow-x-auto rounded-md border bg-muted p-3 font-mono text-[12px] whitespace-pre-wrap break-all">{command}</pre>
-        <Button onClick={() => void navigator.clipboard.writeText(command).then(() => (setCopied(true), setTimeout(() => setCopied(false), 1500)))}>
-          {copied ? <Check /> : <Copy />} {copied ? "Copied" : "Copy invite code"}
-        </Button>
+        <pre className="max-h-64 overflow-auto rounded-md border bg-muted p-3 font-mono text-[12px] whitespace-pre-wrap break-all">{message || "Making an invite…"}</pre>
+        <div className="flex gap-2">
+          <Button className="flex-1" disabled={!message} onClick={() => copy("message", message)}>
+            {copied === "message" ? <Check /> : <Copy />} {copied === "message" ? "Copied" : "Copy message"}
+          </Button>
+          <Button variant="outline" disabled={!code} onClick={() => copy("code", code)}>
+            {copied === "code" ? <Check /> : <Copy />} {copied === "code" ? "Copied" : "Copy link only"}
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );

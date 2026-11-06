@@ -4,7 +4,7 @@ import { api, type WakeEntry, type WakeRule } from "@/lib/api";
 import { people, type BoardData } from "@/lib/board";
 import { cn } from "@/lib/utils";
 
-const DEFAULT: WakeRule = { who: "nobody", can: "answer" };
+const DEFAULT: WakeRule = { who: "team", can: "answer" };
 const select = "rounded-md border bg-background px-2 py-1 text-xs outline-none focus:border-ring";
 
 /** One line per thing a woken agent did, from its CLI's JSON events (Claude Code stream-json, Codex --json). */

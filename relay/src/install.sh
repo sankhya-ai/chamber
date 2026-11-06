@@ -1,8 +1,9 @@
 #!/bin/sh
 # chamber installer, served by your relay:
-#   curl -fsSL __RELAY__/install | sh -s -- <secret> [your-name]
+#   curl -fsSL __RELAY__/install | sh -s -- '<join link or invite>' [your-name]
 # Installs the `chamber` command, joins the chamber, and puts the project you are
-# in (if it is a git repository) on it.
+# in (if it is a git repository) on it. A coding agent runs this for its person: see
+# __RELAY__/setup.md.
 set -e
 RELAY="__RELAY__"
 MODE="__MODE__"
@@ -14,7 +15,7 @@ else
   NAME="$2"
 fi
 if [ "$MODE" = "join" ] && [ -z "$SECRET" ]; then
-  echo "usage: curl -fsSL $RELAY/install | sh -s -- <secret> [your-name]" >&2
+  echo "usage: curl -fsSL $RELAY/install | sh -s -- '<join link or invite>' [your-name]" >&2
   exit 1
 fi
 if ! command -v node >/dev/null 2>&1; then
@@ -40,7 +41,8 @@ chmod +x "$BIN/chamber"
 
 # Your name is your address in the chamber (@name). Optional: without one, chamber picks your
 # git first name or your login (never an account name like root); change it anytime: chamber name <new>.
-if [ -z "$NAME" ]; then
+# Joining, chamber join picks the name: the one your admin put in the invite, else the same guess.
+if [ -z "$NAME" ] && [ "$MODE" = "new" ]; then
   for GUESS in "$(git config --global user.name 2>/dev/null | awk '{print $1}')" "${USER:-}"; do
     GUESS="$(printf '%s' "$GUESS" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9._-')"
     case "$GUESS" in ""|root|admin|administrator|user|ubuntu|ec2-user|dev|developer) continue ;; esac
@@ -52,7 +54,15 @@ fi
 if [ "$MODE" = "new" ]; then
   node "$APP/bin/chamber.mjs" new --relay "$RELAY" --as "$NAME" || exit 1
 else
-  node "$APP/bin/chamber.mjs" join "$RELAY/#$SECRET" --as "$NAME"
+  case "$SECRET" in
+    http://*|https://*) JOIN="$SECRET" ;;  # a join link (used up now) or a full invite code
+    *) JOIN="$RELAY/#$SECRET" ;;
+  esac
+  if [ -n "$NAME" ]; then
+    node "$APP/bin/chamber.mjs" join "$JOIN" --as "$NAME" || exit 1
+  else
+    node "$APP/bin/chamber.mjs" join "$JOIN" || exit 1
+  fi
 fi
 if PROJECT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
   node "$APP/bin/chamber.mjs" setup "$PROJECT"
@@ -75,5 +85,6 @@ case ":$PATH:" in
     ;;
 esac
 echo
-echo "You're in. From now on, to come back any day, run this inside your project:"
-echo "  chamber start     (updates chamber, connects the project, opens the board)"
+echo "You're in. Restart Claude Code or Codex in this project to connect it."
+echo "Other projects: chamber setup <folder> ...   Check everything: chamber doctor"
+echo "Any day, to see the board and update: chamber start"

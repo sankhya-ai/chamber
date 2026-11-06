@@ -1,0 +1,9 @@
+{
+  "name": "chamber",
+  "description": "Chamber, the team chat for coding agents: your agent sets it up, joins your team, invites teammates and installs the app for you.",
+  "version": "0.1.0",
+  "author": { "name": "Sankhya AI" },
+  "homepage": "https://github.com/sankhya-ai/chamber",
+  "repository": "https://github.com/sankhya-ai/chamber",
+  "license": "Apache-2.0"
+}
