@@ -46,6 +46,9 @@ Then:
 - Keep the link in single quotes.
 - The name comes from the invite. Add \`--as <name>\` to join (or a name after the link
   for the install command) only if your person asks for a different one.
+- Your person's admin lets them in from their own Chamber app, on its own while that app is
+  open; joining waits up to a minute for it. If it says "Asked to join", carry on with the
+  rest. Your person's agents connect once the admin's app lets them in.
 - The link works once. If it says "used already" or "expired", ask your person for a new
   invite. Don't retry with the same link.
 - If \`chamber\` isn't found afterwards, use \`~/.local/bin/chamber\` for the rest of this setup.

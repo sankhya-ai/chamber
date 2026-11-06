@@ -19,7 +19,9 @@
 //   chamber decisions               the decision ledger: what agents proposed, what humans approved
 //   chamber decide <id> <approve|reject> [--reason …]  (human) rule on a proposed decision
 //   chamber dream                   tidy the team's memory now (needs OPENROUTER_API_KEY)
-//   chamber revoke <name>           (admin) remove a teammate
+//   chamber revoke <name>           (admin) remove a teammate (on a verified chamber: and hand everyone else a new key)
+//   chamber upgrade                 (admin) make this chamber verified: everyone's own keys, keys that rotate on removal
+//   chamber approve                 (admin) let in teammates waiting to join a verified chamber (the app does it on its own)
 //   chamber doctor                  is this machine ready: Node, PATH, the chamber, membership, each
 //                                   connected project (what an agent setting chamber up checks last)
 //   chamber setup                   put the project you are in in the chamber: its Claude Code, Codex,
@@ -119,6 +121,19 @@ function defaultOwner() {
   return `member-${[...crypto.getRandomValues(new Uint8Array(2))].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
+/** Run `work` with the admin connected to the chamber as <you>/admin (key handouts are messages). */
+async function withAdminSeat(work) {
+  const config = needConfig();
+  const seat = new LineClient(config.invite, `${config.owner}/admin`, { kind: "terminal", label: "the admin, from the terminal" });
+  seat.run();
+  try {
+    await seat.ready(30000);
+    return await work(seat);
+  } finally {
+    seat.close();
+  }
+}
+
 function installCommand(invite) {
   return `curl -fsSL ${invite.relay}/install | sh -s -- ${invite.secret}`;
 }
@@ -208,6 +223,13 @@ async function main() {
       markAdmin(invite, claimed.key ? { adminPublic: claimed.key.public, adminPrivate: claimed.key.private } : {});
       setActiveChamber(HOME);
       console.log(`New chamber on ${invite.relay}; you are its admin, as ${owner}.${claimed.pass ? " The relay is now private to it." : ""}`);
+      if (claimed.key) {
+        const { secureChamber } = await import("../lib/admin.mjs");
+        await secureChamber(loadConfig()).then(
+          () => console.log("It's verified: every message is signed by its sender's own key, and removing someone hands everyone else a new key."),
+          (error) => console.log(`It stays unverified for now (${error.message}); run chamber upgrade to verify it.`),
+        );
+      }
       console.log("\nInvite each teammate with their own command:  chamber invite   (or Invite on the board)");
       if (!opts["no-setup"]) {
         const { setup } = await import("../lib/setup.mjs");
@@ -258,13 +280,36 @@ async function main() {
       // A join link is used up here (once); an invite code or install command works as before.
       const { resolveInvite } = await import("../lib/protocol.mjs");
       const joined = await resolveInvite(positionals.join(" "));
-      const invite = joined.invite;
+      let invite = joined.invite;
       const owner = (opts.as || joined.name || defaultOwner()).toLowerCase();
       if (!opts.home) useChamber(homeFor(invite));
+      // Joining again with an invite pass never trades away a certificate this machine already has.
+      const kept = loadConfig();
+      const { parseCert } = await import("../lib/identity.mjs");
+      if (kept && kept.invite.relay === invite.relay && kept.invite.secret === invite.secret && parseCert(kept.invite.pass) && !parseCert(invite.pass)) invite = kept.invite;
       saveConfig(invite, owner, opts.chamber || joined.chamber || undefined);
       setActiveChamber(HOME);
+      // The admin joining their own brand-new chamber (create.sh does this): it starts verified.
+      if (isAdmin(loadConfig()) && !parseCert(invite.pass)) {
+        const { listMembers, secureChamber } = await import("../lib/admin.mjs");
+        const info = await listMembers(loadConfig()).catch(() => null);
+        if (info?.personal && !info.members.length) await secureChamber(loadConfig()).catch((error) => console.log(`This chamber stays unverified for now (${error.message}); run chamber upgrade to verify it.`));
+      }
       const named = opts.as || joined.name;
       console.log(`You are in ${joined.from ? `${joined.from}'s chamber` : "the chamber"} as ${owner}${named ? "" : " (change it anytime: chamber name <new>)"}.`);
+      // A verified chamber lets a newcomer in once the admin's app certifies them (it does so on its
+      // own while it's open): ask now, and wait a little for it.
+      if (!isAdmin(loadConfig()) && !parseCert(loadConfig().invite.pass) && !process.env.CHAMBER_JOIN_NO_WAIT) {
+        const seat = new LineClient(loadConfig().invite, `${owner}/terminal`, { kind: "terminal" });
+        void seat.run().catch(() => {});
+        const until = Date.now() + 60_000;
+        while (Date.now() < until && !seat.cert && !seat.declined && !(seat.connected && !seat.problem)) await new Promise((r) => setTimeout(r, 1000));
+        seat.close();
+        if (seat.declined) throw new LineError(seat.problem || "the chamber's admin declined your request to join");
+        if (!seat.cert && !seat.connected) {
+          console.log(`Asked to join: ${joined.from || "your admin"} lets you in from their Chamber app (it does so on its own while it's open). Your agents connect once they do; chamber doctor shows where it stands.`);
+        }
+      }
       return 0;
     }
     case "chambers": {
@@ -417,17 +462,42 @@ async function main() {
     }
     case "members": {
       const { listMembers } = await import("../lib/admin.mjs");
-      const { personal, members } = await listMembers(needConfig());
+      const { personal, members, version } = await listMembers(needConfig());
       if (!personal) console.log("This chamber has no personal invites: anyone with the key may join (create.sh adds them).");
-      for (const m of members) console.log(`  ${(m.online ? "●" : "○")} ${m.owner}`);
+      else console.log(version === 3 ? "Verified chamber: each member signs with their own key." : "Unverified chamber: the admin can verify it with chamber upgrade.");
+      for (const m of members) console.log(`  ${(m.online ? "●" : "○")} ${m.owner}${version === 3 && !m.cert ? "  (not verified yet)" : ""}`);
       return 0;
     }
     case "revoke": {
       if (!isAdmin(needConfig())) throw new LineError("only your chamber's admin removes people");
       if (!positionals[0]) throw new LineError("chamber revoke <name>");
-      const { revoke } = await import("../lib/admin.mjs");
-      await revoke(needConfig(), positionals[0], opts.restore ? "restore" : "revoke");
-      console.log(opts.restore ? `${positionals[0].toLowerCase()} may join again (with a new invite).` : `Removed ${positionals[0].toLowerCase()}: their invite no longer works, and the name can't be used.`);
+      const name = positionals[0].toLowerCase();
+      if (opts.restore) {
+        const { revoke } = await import("../lib/admin.mjs");
+        await revoke(needConfig(), name, "restore");
+        console.log(`${name} may join again (with a new invite).`);
+        return 0;
+      }
+      const { removeMember } = await import("../lib/admin.mjs");
+      const result = await withAdminSeat((seat) => removeMember(needConfig(), name, seat));
+      console.log(`Removed ${name}: their invite no longer works, and the name can't be used.${result.rekeyed ? ` Everyone else has a new key (epoch ${result.epoch}); ${name} can't read anything sent from now on.` : ""}`);
+      return 0;
+    }
+    case "upgrade": {
+      if (!isAdmin(needConfig())) throw new LineError("only your chamber's admin upgrades it");
+      const { secureChamber } = await import("../lib/admin.mjs");
+      const result = await secureChamber(needConfig());
+      if (result.already) console.log("This chamber is already verified.");
+      else console.log(`Verified. Every message is now signed by its sender's own key, and removing someone hands everyone else a new key.${result.resealed ? ` Team memory (${result.resealed} files) is sealed with the new key.` : ""}\nTeammates' Chamber apps rejoin on their own: keep yours open (it lets them in), or run chamber approve.`);
+      return 0;
+    }
+    case "approve": {
+      if (!isAdmin(needConfig())) throw new LineError("only your chamber's admin lets people in");
+      const { approvePending } = await import("../lib/admin.mjs");
+      const result = await withAdminSeat((seat) => approvePending(needConfig(), seat));
+      for (const owner of result.approved) console.log(`Let in ${owner}.`);
+      for (const r of result.rejected) console.log(`Declined ${r.owner || r.member}: ${r.reason}`);
+      if (!result.approved.length && !result.rejected.length) console.log("Nobody is waiting to join.");
       return 0;
     }
     case "setup": {
@@ -471,7 +541,16 @@ async function main() {
         if (info) {
           const member = await fetch(`${config.invite.relay}/v1/lines/${config.invite.lineId}/memory`, { headers, signal: AbortSignal.timeout(8000) }).catch(() => null);
           const why = member && !member.ok ? (await member.json().catch(() => ({}))).error : "";
-          check(Boolean(member?.ok), member?.ok ? "membership accepted" : `membership refused${why ? `: ${why}` : ""}`, "ask your admin for a new invite");
+          // A verified chamber, joined with an invite pass that the admin's app hasn't certified yet.
+          const { parseCert } = await import("../lib/identity.mjs");
+          const asked = !member?.ok && !parseCert(config.invite.pass) && config.invite.pass
+            ? await fetch(`${config.invite.relay}/v1/lines/${config.invite.lineId}/enroll`, { headers, signal: AbortSignal.timeout(8000) }).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+            : null;
+          if (asked?.version >= 3 && asked.status !== "rejected") {
+            check(false, asked.status === "none" ? "not asked to join yet" : "asked to join: waiting for the admin to let you in", asked.status === "none" ? "open the Chamber app, or restart Claude Code in a connected project: either asks to join" : "ask your admin to open their Chamber app (it lets you in on its own), or to run chamber approve");
+          } else {
+            check(Boolean(member?.ok), member?.ok ? "membership accepted" : `membership refused${why ? `: ${why}` : ""}${asked?.status === "rejected" ? " (the admin declined)" : ""}`, "ask your admin for a new invite");
+          }
         }
         // Each project this machine connected, and whether its Claude Code is still wired to the chamber.
         const agents = join(HOME, "agents");

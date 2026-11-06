@@ -615,6 +615,7 @@ test("the Deploy-button path: a fresh relay is claimed by the first chamber; the
     });
     assert.equal(made.code, 0, made.out);
     assert.match(made.out, /you are its admin, as ashish\. The relay is now private to it\./);
+    assert.match(made.out, /It's verified/, "a new chamber starts verified (v3)");
     assert.match((await (await fetch(fresh.url, { headers: { accept: "text/html" } })).text()), /belongs to a chamber/);
     assert.equal((await fetch(`${fresh.url}/v1/claim`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 409, "a relay is claimed once");
     const stranger = await Invite.create(fresh.url).ready();
@@ -625,12 +626,29 @@ test("the Deploy-button path: a fresh relay is claimed by the first chamber; the
     const key = (await run(["invite", "--format", "code"], { home: lineHome, env: admin })).stdout.trim();
     assert.match(key, /#.+~/, "a personal pass in the code");
     const mate = tmp("mate");
-    await run(["join", key, "--as", "nitin"], { home: mate });
+    // (Without its wait: this test plays her app, which asks to join below.)
+    await run(["join", key, "--as", "nitin"], { home: mate, env: { CHAMBER_JOIN_NO_WAIT: "1" } });
     assert.match((await run(["invite"], { home: mate })).stderr, /only your chamber's admin/);
     const config = JSON.parse(readFileSync(join(mate, "config.json"), "utf8"));
+    // A verified chamber: the teammate's app asks to join, and waits for the admin's app (or
+    // `chamber approve`) to certify it and hand over the keys.
     const nitinInvite = await Invite.parse(config.invite).ready();
-    const nitin = await join_(nitinInvite, "nitin/board", { kind: "human", listens: true });
+    const nitin = new LineClient(nitinInvite, "nitin/board", { kind: "human", listens: true });
+    clients.add(nitin);
+    nitin.run();
+    for (let i = 0; i < 100 && !/waiting for the chamber's admin/.test(nitin.problem || ""); i++) await sleep(100);
+    assert.match(nitin.problem, /waiting for the chamber's admin to let you in/);
+    const approved = await run(["approve"], { home: lineHome, env: admin });
+    assert.match(approved.stdout, /Let in nitin\./, approved.stderr);
+    await nitin.ready(20000);
     assert.equal(nitin.connected, true, "the teammate is in");
+    assert.equal(nitin.lineVersion, 3);
+    for (let i = 0; i < 100 && nitin.epochs.current !== 1; i++) await sleep(100);
+    assert.equal(nitin.epochs.current, 1, "the admin handed over the chamber's key");
+    assert.match((await run(["members"], { home: lineHome, env: admin })).stdout, /Verified chamber/);
+    // Removing a teammate always hands everyone else a new key.
+    const removed = await run(["revoke", "nitin"], { home: lineHome, env: admin });
+    assert.match(removed.stdout, /Everyone else has a new key \(epoch 2\)/, removed.stderr);
     nitin.close();
 
     // The agent-driven way: the admin's message, pasted into a teammate's coding agent, which runs
@@ -654,9 +672,17 @@ test("the Deploy-button path: a fresh relay is claimed by the first chamber; the
       child.stdout.on("data", (d) => (out += d));
       child.stderr.on("data", (d) => (out += d));
       child.on("close", (code) => done({ code, out }));
+      // The admin's app lets her in on its own; here the admin's terminal does it while she waits.
+      void (async () => {
+        for (let i = 0; i < 60 && child.exitCode === null; i++) {
+          await run(["approve"], { home: lineHome, env: admin });
+          await sleep(1000);
+        }
+      })();
     });
     assert.equal(installed.code, 0, installed.out);
     assert.match(installed.out, /You are in ashish's chamber as maya\./, "the name the admin chose");
+    assert.doesNotMatch(installed.out, /Asked to join/, "let in while the installer waited");
     assert.ok(!installed.out.includes(link.split("#")[1]), "the installer never prints the key");
     assert.ok(existsSync(join(mayaProject, ".claude", "settings.local.json")), "and the project it ran in is connected");
     const doctor = await run(["doctor"], { home: join(mayaHome, ".chamber"), env: { HOME: mayaHome } });
@@ -667,10 +693,12 @@ test("the Deploy-button path: a fresh relay is claimed by the first chamber; the
     const tampered = link.replace(/#.+$/, `#${"A".repeat(43)}`);
     assert.match((await run(["join", tampered], { home: tmp("thief2") })).stderr, /used already|doesn't open/);
 
+    // Maya is a member now (her certificate replaced the pass): what follows uses her keys.
+    const mayaInvite = await Invite.parse(JSON.parse(readFileSync(join(mayaHome, ".chamber", "config.json"), "utf8")).invite).ready();
     // Only the admin makes join links, even with a member's pass.
-    const forged = await fetch(`${fresh.url}/v1/lines/${nitinInvite.lineId}/tickets`, {
+    const forged = await fetch(`${fresh.url}/v1/lines/${mayaInvite.lineId}/tickets`, {
       method: "POST",
-      headers: { ...nitinInvite.auth, "x-chamber-pass": nitinInvite.pass, "content-type": "application/json" },
+      headers: { ...mayaInvite.auth, "x-chamber-pass": mayaInvite.pass, "content-type": "application/json" },
       body: JSON.stringify({ id: "f".repeat(32), sealed: "x" }),
     });
     assert.equal(forged.status, 403);
@@ -679,19 +707,19 @@ test("the Deploy-button path: a fresh relay is claimed by the first chamber; the
     const { CoordinationManager } = await import("../lib/coordination.mjs");
     const mgr = new CoordinationManager(tmp("coord"));
     const task = mgr.request({ op: "ask", from: "nitin/claude-code.api", to: "ashish/claude-code.web", title: "token expiry type?", description: "is exp int seconds?", files: ["api/auth.py"] });
-    assert.ok(await mgr.pushToRelay(nitinInvite, task, "request"), "pushed");
-    const raw = await (await fetch(`${fresh.url}/v1/lines/${nitinInvite.lineId}/coordination`, { headers: { ...nitinInvite.auth, "x-chamber-pass": nitinInvite.pass } })).json();
+    assert.ok(await mgr.pushToRelay(mayaInvite, task, "request"), "pushed");
+    const raw = await (await fetch(`${fresh.url}/v1/lines/${mayaInvite.lineId}/coordination`, { headers: { ...mayaInvite.auth, "x-chamber-pass": mayaInvite.pass } })).json();
     const stored = JSON.stringify(raw.tasks);
     assert.ok(!/token expiry|exp int|api\/auth/.test(stored), `the relay holds no task text: ${stored}`);
-    await mgr.pushToRelay(nitinInvite, task, "resolve", { by: "ashish/claude-code.web", resolution: "int, epoch seconds", evidence: { commit: "abc1234" } });
+    await mgr.pushToRelay(mayaInvite, task, "resolve", { by: "ashish/claude-code.web", resolution: "int, epoch seconds", evidence: { commit: "abc1234" } });
     const other = new CoordinationManager(tmp("coord2"));
-    await other.syncWithRelay(nitinInvite);
+    await other.syncWithRelay(mayaInvite);
     const seen = other.get(task.id);
     assert.equal(seen.title, "token expiry type?");
     assert.deepEqual(seen.files, ["api/auth.py"]);
     assert.equal(seen.resolution, "int, epoch seconds");
     assert.equal(seen.evidence.commit, "abc1234");
-    assert.equal((await fetch(`${fresh.url}/v1/lines/${nitinInvite.lineId}/coordination`, { headers: nitinInvite.auth })).status, 403, "members only");
+    assert.equal((await fetch(`${fresh.url}/v1/lines/${mayaInvite.lineId}/coordination`, { headers: mayaInvite.auth })).status, 403, "members only");
   } finally {
     fresh.stop();
   }

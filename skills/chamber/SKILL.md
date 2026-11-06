@@ -78,6 +78,9 @@ stop and ask your person.
 - Single-quote the link.
 - The name comes from the invite. Add `--as <name>` only if your person asks for a different
   one.
+- The admin's Chamber app lets each newcomer in on its own, usually within seconds, and join
+  waits up to a minute for that. If it says "Asked to join", tell your person their admin needs
+  the Chamber app open (or to run `chamber approve`). `chamber doctor` shows when they're in.
 - "used already" or "expired" means the link is spent. Ask your person for a new invite, and
   don't retry it.
 - Not installed yet? Install first (above). The invite message also links to a setup page on
@@ -96,6 +99,8 @@ chamber" screen.
   not a channel.
 - **Never send or post it yourself** (Slack, email, chamber messages, files, commits, issues).
 - The teammate pastes it into their own Claude Code or Codex, and their agent does the rest.
+- Their Chamber asks to join, and your person's Chamber app lets them in on its own while it's
+  open. With the app closed, run `chamber approve` once they say they've joined.
 - Not the admin (`chamber chambers` marks the chambers you're admin of)? Invites come from
   whoever created the chamber: tell your person to ask them.
 
