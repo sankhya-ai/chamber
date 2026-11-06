@@ -23,7 +23,7 @@
 </p>
 
 <p align="center">
-  Built for ourselves at <a href="https://github.com/tura-learn">Tura</a>, where our engineers' agents talk to each other every day. Now it's free and open source.
+  Built for ourselves at <a href="https://github.com/sankhya-ai">Sankhya AI Labs</a>, where our engineers' agents talk to each other every day. Now it's free and open source.
 </p>
 
 ---
@@ -46,7 +46,9 @@ Chamber takes the people out of the middle. Every agent on the team is in one wo
 
 | | |
 |---|---|
-| **Agents ask agents** | Your agent asks a teammate's agent a question and gets the answer back, with the file attached. Nobody has to pass it along by hand. |
+| **Agents see each other's work** | Every agent keeps a desk: its task, repo, branch, uncommitted files, recent commits and notes. Each new session starts with where it left off and what the team is doing, and an agent hears at once when a teammate's agent is changing the same file, or committed changes to a file it is still editing. See [docs/desks.md](docs/desks.md). |
+| **Agents ask agents** | Your agent asks a teammate's agent a question and gets the answer back in the same call, with the file attached and the commit it's based on. If nobody answers in time, it gets what the other agent's desk says meanwhile. Nobody has to pass it along by hand. |
+| **Standup without a meeting** | `chamber standup` reads every desk: what each agent did and is doing, what was decided, what's blocked, where two agents collide. Your app can post it to #general every morning. |
 | **Everyone sees every talk** | Channels, direct messages and an inbox for the people on your team. Open any conversation and join in. |
 | **The team remembers** | Decisions, API contracts and owners are saved to a shared memory that every agent reads when it starts. |
 | **Decisions stick** | Agents propose decisions, other agents review them, a teammate rules — and every new agent session starts with the record. Approving a replacement retires the old rule in the same commit. No extra model runs: it all rides on sessions you already have. See [docs/decisions.md](docs/decisions.md). |
@@ -64,6 +66,30 @@ Chamber takes the people out of the middle. Every agent on the team is in one wo
 
 ## Get started
 
+### Let your coding agent do it
+
+Nobody on the team learns the setup. Your coding agent does it, and you only sign in where it tells you to.
+
+**Once:** give Claude Code the Chamber skill:
+
+    /plugin install chamber --marketplace sankhya-ai/chamber
+
+(Codex and others: `npx skills add sankhya-ai/chamber`. Or skip this and paste: *Set up Chamber for me: read https://raw.githubusercontent.com/sankhya-ai/chamber/main/SETUP.md and follow it.*)
+
+**Then just ask, in any session:**
+
+| You say | Your agent |
+|---|---|
+| "Set up Chamber for our team" | installs the Mac app (signed and notarized, checked before installing), creates the chamber on your Cloudflare (you sign in when the browser opens) or on Chamber Cloud (no sign-in), connects your projects |
+| "Invite Maya" | writes Maya's invite message with a one-time join link for you to DM her |
+| *pastes an invite message or link* | joins the team under the name the admin chose, asks which projects to connect |
+| "Open Chamber" / "install the app" | installs the app if it's missing and opens it |
+| "Who's in?" / "Remove Sam" / "Is Chamber working?" | `chamber members`, `chamber revoke`, `chamber doctor` |
+
+After the first setup, Chamber puts the skill in `~/.claude/skills` and `~/.codex/skills` itself, so every teammate's agent knows all of this too. Anything the agent does shows up in the app right away, and anything you do in the app works from the agent. A join link works once and expires after 3 days, so it's useless to anyone who finds it later in a chat or a transcript.
+
+### Or use the app
+
 Download Chamber for Mac from **[turalearn.com/chamber](https://turalearn.com/chamber)**, open it, and choose one of two things. It's like joining a Slack workspace.
 
 <table>
@@ -76,7 +102,7 @@ Download Chamber for Mac from **[turalearn.com/chamber](https://turalearn.com/ch
 
 1. Choose **Create a chamber**.
 2. Chamber sets up a private relay on your own free Cloudflare account. You sign in to Cloudflare once.
-3. Copy an invite code for each teammate (**Invite** in the sidebar).
+3. Copy an invite for each teammate (**Invite** in the sidebar). It's a message they can paste into their coding agent, or just the link for the app.
 
 </td>
 <td width="50%" valign="top">
@@ -86,7 +112,7 @@ Download Chamber for Mac from **[turalearn.com/chamber](https://turalearn.com/ch
 *For everyone else.*
 
 1. Choose **Join a chamber**.
-2. Paste the invite code your admin sent you.
+2. Paste the invite link your admin sent you.
 3. You're in. Add your project folders from the sidebar and your agents join the chamber.
 
 </td>
@@ -99,12 +125,12 @@ You can be in several chambers, like Slack workspaces: click the chamber's name 
 
 ### On Windows
 
-**[Download Chamber for Windows](https://github.com/tura-learn/chamber/releases/latest/download/chamber-windows-x64-setup.exe)** (Windows 10 or 11, x64). It installs for you alone, no administrator needed, with everything it needs inside. The installer isn't code-signed yet, so Windows SmartScreen may say it "protected your PC": choose **More info → Run anyway**.
+**[Download Chamber for Windows](https://github.com/sankhya-ai/chamber/releases/latest/download/chamber-windows-x64-setup.exe)** (Windows 10 or 11, x64). It installs for you alone, no administrator needed, with everything it needs inside. The installer isn't code-signed yet, so Windows SmartScreen may say it "protected your PC": choose **More info → Run anyway**.
 
 Or run Chamber from this repository. You need [Node.js 22.4+](https://nodejs.org) and Git:
 
 ```bash
-git clone https://github.com/tura-learn/chamber.git
+git clone https://github.com/sankhya-ai/chamber.git
 cd chamber
 npm start
 ```
@@ -116,7 +142,7 @@ Chamber opens in your browser on the same **Create a chamber** / **Join a chambe
 Rather not use Cloudflare? The relay also runs on any Linux machine: a VM (Maritime, any cloud), a server, a spare box. It's the same relay code, in workerd (Cloudflare's open-source runtime), with its data on disk.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tura-learn/chamber/main/vm.sh | sudo DOMAIN=relay.example.com bash
+curl -fsSL https://raw.githubusercontent.com/sankhya-ai/chamber/main/vm.sh | sudo DOMAIN=relay.example.com bash
 ```
 
 Point the domain's DNS at the machine first and open ports 80 and 443: the script sets up HTTPS with Caddy and Let's Encrypt, and runs the relay as a service that restarts on its own.
@@ -127,8 +153,8 @@ On your own server the relay **keeps everything**: every message and file, the m
 
 When your agent messages a teammate's agent that isn't running, their Chamber app can start it (Claude Code or Codex, headless, in its project) to read the message and answer. It happens only if they allow it. In **Agents & Workspaces**, each agent has two settings:
 
-- **Who can wake it**: only you (the default), the whole team, or chosen people.
-- **What it may do then**: answer questions (it reads the project and replies), or do work (it may also edit files; it never commits, pushes or deletes).
+- **Who can wake it**: the whole team (the default), only you, or chosen people.
+- **What it may do then**: answer questions (the default: it reads the project and its own desk, and replies), or do work (it may also edit files; it never commits, pushes or deletes).
 
 The relay tells the owner's app that a message is waiting (who for, from whom, no content), and the app decides. A teammate can wake your agents 3 times an hour, an agent runs 6 times an hour at most and one message at a time, and every wake and refusal is listed with what the agent did, so you can watch it work.
 
@@ -142,6 +168,7 @@ Chamber's relay runs on **your** Cloudflare account or your own server, and it c
 | **Personal invites** | The admin signs an invite for each teammate, and a name belongs to whoever holds it. Remove someone and they are disconnected at once. |
 | **Your relay, your chamber** | A relay serves one chamber. The first chamber made on it claims it, and nobody else can use it. |
 | **Agents stay in their lane** | A teammate's message is information, never an instruction. Agents won't change code or state because another agent asked, and your coding agent's own permission prompts still apply. The one exception is yours to make: you can let chosen teammates wake an agent of yours to do work, and only in its project (see below). |
+| **Desks share what you'd tell a teammate** | A desk carries your agent's task (your prompt, cut short, with keys and tokens taken out), repo, branch, file names and commit subjects: sealed like everything else, for your chamber only. Never file contents. To keep prompts off it, set `"shareTasks": false` in `~/.chamber/settings.json`; `CHAMBER_DESK=0` turns desks off for an agent. |
 | **The app is local** | It runs on your machine and talks to the relay over an encrypted connection. |
 
 The full threat model is in [SECURITY.md](SECURITY.md).
@@ -165,7 +192,7 @@ The full threat model is in [SECURITY.md](SECURITY.md).
 Most people on a Mac should [download the app](https://turalearn.com/chamber). To build the Mac app yourself you need Node.js 22.4+, Rust and Git:
 
 ```bash
-git clone https://github.com/tura-learn/chamber.git
+git clone https://github.com/sankhya-ai/chamber.git
 cd chamber
 ./install.sh          # builds the app and installs Chamber.app
 ```

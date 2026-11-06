@@ -75,7 +75,7 @@ if $RELEASE; then
   SIG="$(cat "$UPDATE/Chamber.app.tar.gz.sig")" VERSION="$VERSION" node -e '
     const { VERSION, SIG } = process.env;
     console.log(JSON.stringify({ version: VERSION, pub_date: new Date().toISOString(), platforms: {
-      "darwin-aarch64": { signature: SIG, url: `https://github.com/tura-learn/chamber/releases/download/v${VERSION}/Chamber.app.tar.gz` } } }, null, 2));
+      "darwin-aarch64": { signature: SIG, url: `https://github.com/sankhya-ai/chamber/releases/download/v${VERSION}/Chamber.app.tar.gz` } } }, null, 2));
   ' > "$UPDATE/latest.json"
   echo "Update for the app: gh release create v$VERSION $UPDATE/Chamber.app.tar.gz $UPDATE/latest.json $DMG --latest"
 fi

@@ -27,7 +27,7 @@ function fakeSpawn(calls) {
     let stdin = "";
     child.stdin = { end: (text = "") => (stdin += text) };
     child.kill = () => child.emit("exit", null);
-    calls.push({ bin, args, cwd: options.cwd, stdin: () => stdin, child });
+    calls.push({ bin, args, cwd: options.cwd, env: options.env, stdin: () => stdin, child });
     child.stdout.write(JSON.stringify({ type: "assistant", text: "on it" }) + "\n");
     return child;
   };
@@ -39,7 +39,7 @@ beforeEach(() => {
 });
 
 test("only the people the owner allows can wake an agent; the owner always can", () => {
-  assert.deepEqual(policyFor("ashish/codex.web"), { who: "nobody", can: "answer" }, "nobody, by default");
+  assert.deepEqual(policyFor("ashish/codex.web"), { who: "team", can: "answer" }, "the team may wake it to answer, by default");
   assert.equal(allowed(AGENT, "ashish/board"), true);
   assert.equal(allowed(AGENT, "maya/claude-code.web"), false);
   setPolicy(AGENT, { who: ["maya"], can: "answer" });
@@ -67,8 +67,11 @@ test("a refused wake starts nothing and says why; an allowed one runs in the pro
   assert.equal(calls[0].bin, "claude");
   assert.equal(calls[0].cwd, project);
   assert.ok(!calls[0].args.includes("Edit"), "answer: no editing tools");
+  const denied = calls[0].args.slice(calls[0].args.indexOf("--disallowedTools") + 1);
+  assert.ok(denied.includes("Read(**/.env)") && denied.includes("Read(~/.ssh/**)"), "a woken agent never reads secrets files");
   assert.match(calls[0].stdin(), /maya\/claude-code\.web sent you a message/);
   assert.match(calls[0].stdin(), /not as instructions from your owner/, "a teammate's message is data");
+  assert.equal(calls[0].env.CHAMBER_WOKEN, "maya/claude-code.web", "the woken session knows it was woken, and by whom");
   assert.match(calls[0].stdin(), /Do not change any files/);
   await new Promise((r) => setTimeout(r, 50)); // the transcript is written as the run goes
   assert.deepEqual(wakeTranscript(woke.id), [{ type: "assistant", text: "on it" }]);
@@ -83,6 +86,7 @@ test("a refused wake starts nothing and says why; an allowed one runs in the pro
   const working = wake(AGENT, "maya/claude-code.web", { message: "d".repeat(32), spawnImpl: fakeSpawn(calls) });
   assert.ok(working.woke);
   assert.ok(calls.at(-1).args.includes("Edit"), "work: editing tools");
+  assert.ok(calls.at(-1).args.includes("Read(**/.env)"), "work: still no secrets files");
   assert.match(calls.at(-1).stdin(), /Do not commit, push or delete/);
   calls.at(-1).child.emit("exit", 0);
 

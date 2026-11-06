@@ -1,20 +1,29 @@
 #!/usr/bin/env node
 // chamber — your coding agents and your teammates' agents, talking over a tiny relay.
 //
-//   chamber desktop                 launch Chamber Desktop (local-first standalone app window)
-//   chamber deploy                  (admin) deploy Cloudflare relay & initialize chamber
+//   chamber app                     open the Chamber app; on a Mac, install it first if it's missing
+//                                   (signed and notarized, checked before installing; --no-open)
+//   chamber deploy                  (admin) deploy Cloudflare relay & initialize chamber (--device: sign in
+//                                   to Cloudflare with a code, from any browser)
 //   chamber start                   open Chamber (create or join a chamber the first time); any day: updates, connects the project
 //                                   you are in, and opens the board (--no-board, --no-update)
 //   chamber board                   open the board: every conversation your agents are in
-//   chamber invite                  (admin) a personal join command for one teammate
+//   chamber invite [name]           (admin) a message for one teammate to paste into Claude Code or
+//                                   Codex: their agent sets Chamber up from a one-time join link
+//                                   (--days 1-7, default 3; --format link|code for just the link or code)
 //   chamber members                 who is in the chamber
 //   chamber memory [path]           read the team's memory (MEMORY.md)
+//   chamber standup                 what every agent did and is doing, from their desks (--post to send it
+//                                   to #general or --channel; --daily 10:00 to have this machine's app post it
+//                                   every day, --daily off to stop)
 //   chamber decisions               the decision ledger: what agents proposed, what humans approved
 //   chamber decide <id> <approve|reject> [--reason …]  (human) rule on a proposed decision
 //   chamber dream                   tidy the team's memory now (needs OPENROUTER_API_KEY)
 //   chamber revoke <name>           (admin) remove a teammate (on a verified chamber: and hand everyone else a new key)
 //   chamber upgrade                 (admin) make this chamber verified: everyone's own keys, keys that rotate on removal
 //   chamber approve                 (admin) let in teammates waiting to join a verified chamber (the app does it on its own)
+//   chamber doctor                  is this machine ready: Node, PATH, the chamber, membership, each
+//                                   connected project (what an agent setting chamber up checks last)
 //   chamber setup                   put the project you are in in the chamber: its Claude Code, Codex,
 //                                   Antigravity, and your DeepSeek Harness (--harness codex,… to choose)
 //   chamber status                  who is in the chamber
@@ -35,7 +44,8 @@
 // Internal (called by Claude Code): `mcp`, `hook`, `wait` with --agent <name>.
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -76,6 +86,10 @@ const { values: opts, positionals } = parseArgs({
     home: { type: "string" },
     chamber: { type: "string" },
     "no-files": { type: "boolean" },
+    post: { type: "boolean" },
+    daily: { type: "string" },
+    days: { type: "string" },
+    device: { type: "boolean" },
   },
 });
 
@@ -181,24 +195,25 @@ async function main() {
         name: opts.chamber,
         projectPath: positionals[0] ? resolve(positionals[0]) : null,
         storage: !opts["no-files"],
+        device: Boolean(opts.device),
         onProgress: (msg) => console.log(msg),
       });
       setActiveChamber(HOME);
       console.log(`\n\x1b[1;32m✔ Chamber deployed and initialized!\x1b[0m`);
       console.log(`Relay: ${res.relay}`);
       console.log(`You are the admin: @${res.owner}`);
-      console.log(`\nTo invite teammates, run:`);
-      console.log(`  \x1b[1mchamber invite\x1b[0m`);
-      console.log(`\nOr send them this personal invite command:`);
-      console.log(`  ${res.inviteCommand}`);
+      console.log(`\nTo invite a teammate (a message they paste into Claude Code or Codex):`);
+      console.log(`  \x1b[1mchamber invite <their name>\x1b[0m`);
       console.log(`\nTo open the desktop app:`);
       console.log(`  \x1b[1mchamber desktop\x1b[0m`);
       return 0;
     }
     case "new": {
-      if (!opts.relay) throw new LineError("chamber new --relay https://<your relay>");
+      if (!opts.relay) throw new LineError("chamber new --relay https://<your relay>   (or --relay cloud for Chamber Cloud)");
       const { claimRelay } = await import("../lib/admin.mjs");
-      const invite = await Invite.create(opts.relay).ready();
+      // "cloud": Chamber Cloud, the hosted relay (no Cloudflare account; a 7-day trial, then a seat per teammate).
+      const relay = opts.relay === "cloud" ? (await import("../lib/server.mjs")).CHAMBER_CLOUD_RELAY : opts.relay;
+      const invite = await Invite.create(relay).ready();
       const owner = (opts.as || defaultOwner()).toLowerCase();
       // A relay from the Deploy button is unclaimed: the first chamber made on it claims it
       // (its admin key, this chamber only). A relay set up by create.sh is already private.
@@ -262,14 +277,17 @@ async function main() {
     }
     case "join": {
       if (!positionals[0]) throw new LineError("chamber join <invite> [--as <name>]");
-      const owner = (opts.as || defaultOwner()).toLowerCase();
-      let invite = Invite.fromInput(positionals.join(" "));
+      // A join link is used up here (once); an invite code or install command works as before.
+      const { resolveInvite } = await import("../lib/protocol.mjs");
+      const joined = await resolveInvite(positionals.join(" "));
+      let invite = joined.invite;
+      const owner = (opts.as || joined.name || defaultOwner()).toLowerCase();
       if (!opts.home) useChamber(homeFor(invite));
       // Joining again with an invite pass never trades away a certificate this machine already has.
       const kept = loadConfig();
       const { parseCert } = await import("../lib/identity.mjs");
       if (kept && kept.invite.relay === invite.relay && kept.invite.secret === invite.secret && parseCert(kept.invite.pass) && !parseCert(invite.pass)) invite = kept.invite;
-      saveConfig(invite, owner, opts.chamber);
+      saveConfig(invite, owner, opts.chamber || joined.chamber || undefined);
       setActiveChamber(HOME);
       // The admin joining their own brand-new chamber (create.sh does this): it starts verified.
       if (isAdmin(loadConfig()) && !parseCert(invite.pass)) {
@@ -277,7 +295,21 @@ async function main() {
         const info = await listMembers(loadConfig()).catch(() => null);
         if (info?.personal && !info.members.length) await secureChamber(loadConfig()).catch((error) => console.log(`This chamber stays unverified for now (${error.message}); run chamber upgrade to verify it.`));
       }
-      console.log(`You are in the chamber as ${owner}${opts.as ? "" : " (change it anytime: chamber name <new>)"}.`);
+      const named = opts.as || joined.name;
+      console.log(`You are in ${joined.from ? `${joined.from}'s chamber` : "the chamber"} as ${owner}${named ? "" : " (change it anytime: chamber name <new>)"}.`);
+      // A verified chamber lets a newcomer in once the admin's app certifies them (it does so on its
+      // own while it's open): ask now, and wait a little for it.
+      if (!isAdmin(loadConfig()) && !parseCert(loadConfig().invite.pass) && !process.env.CHAMBER_JOIN_NO_WAIT) {
+        const seat = new LineClient(loadConfig().invite, `${owner}/terminal`, { kind: "terminal" });
+        void seat.run().catch(() => {});
+        const until = Date.now() + 60_000;
+        while (Date.now() < until && !seat.cert && !seat.declined && !(seat.connected && !seat.problem)) await new Promise((r) => setTimeout(r, 1000));
+        seat.close();
+        if (seat.declined) throw new LineError(seat.problem || "the chamber's admin declined your request to join");
+        if (!seat.cert && !seat.connected) {
+          console.log(`Asked to join: ${joined.from || "your admin"} lets you in from their Chamber app (it does so on its own while it's open). Your agents connect once they do; chamber doctor shows where it stands.`);
+        }
+      }
       return 0;
     }
     case "chambers": {
@@ -314,9 +346,19 @@ async function main() {
     }
     case "invite": {
       if (!isAdmin(needConfig())) throw new LineError("only your chamber's admin invites people: ask them for the join command");
-      const { inviteCommand } = await import("../lib/admin.mjs");
-      const { inviteCode } = await import("../lib/admin.mjs");
-      console.log(`Send this invite code to one teammate, privately (it is their personal key to the chamber). They paste it into Chamber Desktop under "Join a chamber":\n\n  ${await inviteCode(needConfig())}\n\nOr, from a terminal:\n\n  ${await inviteCommand(needConfig())}`);
+      const { inviteCode, inviteMessage } = await import("../lib/admin.mjs");
+      if (opts.format === "code") {
+        console.log(await inviteCode(needConfig()));
+        return 0;
+      }
+      // One message per teammate: they paste it into Claude Code or Codex, which sets Chamber up.
+      const days = Math.min(7, Math.max(0.01, Number(opts.days || 3)));
+      const { ticket, text } = await inviteMessage(needConfig(), { name: positionals[0] || null, days });
+      if (opts.format === "link" && ticket) {
+        console.log(ticket.link);
+        return 0;
+      }
+      console.log(`Send this to ${positionals[0] ? `@${positionals[0].toLowerCase()}` : "one teammate"}, privately. ${ticket ? "It works once, for one person." : "It is their personal key to the chamber."}\n\n${text.replace(/^/gm, "  ")}`);
       return 0;
     }
     case "dream": {
@@ -330,6 +372,33 @@ async function main() {
       const config = needConfig();
       const file = await new TeamMemory(config.invite, `${config.owner}/terminal`).read(positionals[0] || ENTRY);
       console.log(file?.text ?? "(empty)");
+      return 0;
+    }
+    case "standup": {
+      const config = needConfig();
+      const desk = await import("../lib/desk.mjs");
+      if (opts.daily) {
+        const set = desk.setStandup(opts.daily, opts.channel || "#general");
+        console.log(set ? `This machine's Chamber app posts the standup to ${set.channel} every day at ${set.at} (while it runs).` : "No daily standup from this machine.");
+        return 0;
+      }
+      const { TeamMemory } = await import("../lib/memory.mjs");
+      const memory = new TeamMemory(config.invite, `${config.owner}/terminal`);
+      let people = [];
+      try {
+        const { listMembers } = await import("../lib/admin.mjs");
+        people = ((await listMembers(config)).members || []).map((m) => m.owner).filter(Boolean);
+      } catch {}
+      const text = desk.standup(await desk.readDesks(memory), { people });
+      console.log(text);
+      if (opts.post) {
+        const client = new LineClient(config.invite, `${config.owner}/terminal`, { kind: "terminal" });
+        client.run();
+        const channel = opts.channel || "#general";
+        await client.send(channel, text, { title: `Standup, ${new Date().toUTCString().slice(0, 11)}` });
+        console.log(`\nPosted to ${channel}.`);
+        client.close();
+      }
       return 0;
     }
     case "decisions": {
@@ -436,13 +505,86 @@ async function main() {
       const { setup } = await import("../lib/setup.mjs");
       const register = !opts["no-register"] && !process.env.CHAMBER_NO_REGISTER;
       const harnesses = opts.harness ? opts.harness.split(",").map((h) => h.trim()).filter(Boolean) : null;
-      const result = setup(positionals[0] || ".", { name: opts.name, wake: !opts["no-wake"], register, harnesses });
       const LABEL = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity", dsh: "DeepSeek Harness (for you, in every project)" };
-      console.log(`${basename(resolve(positionals[0] || "."))}: in the chamber now:`);
-      for (const h of result.harnesses) console.log(`  ${LABEL[h.harness]}  as ${config.owner}/${h.agent}`);
-      if (result.registered || !register) console.log("Restart them in this project to connect.");
-      else console.log(`Could not run the claude command; register the MCP server yourself, then restart Claude Code:\n  ${result.manual}`);
+      // Several projects at once: chamber setup ~/code/api ~/code/web
+      for (const folder of positionals.length ? positionals : ["."]) {
+        if (!existsSync(resolve(folder))) {
+          console.log(`${folder}: no such folder, skipped.`);
+          continue;
+        }
+        const result = setup(folder, { name: positionals.length > 1 ? undefined : opts.name, wake: !opts["no-wake"], register, harnesses });
+        console.log(`${basename(resolve(folder))}: in the chamber now:`);
+        for (const h of result.harnesses) console.log(`  ${LABEL[h.harness]}  as ${config.owner}/${h.agent}`);
+        if (!result.registered && register) console.log(`  Could not run the claude command; register the MCP server yourself:\n    ${result.manual}`);
+      }
+      console.log("Restart Claude Code or Codex in these projects to connect (a running session doesn't pick it up).");
       return 0;
+    }
+    case "doctor": {
+      const lines = [];
+      let ready = true;
+      const check = (ok, text, fix = "") => {
+        if (!ok) ready = false;
+        lines.push(`${ok ? "✔" : "✘"} ${text}${!ok && fix ? `\n    fix: ${fix}` : ""}`);
+      };
+      const [major, minor] = process.versions.node.split(".").map(Number);
+      check(major > 22 || (major === 22 && minor >= 4), `Node ${process.versions.node}`, "install Node.js 22.4 or newer (https://nodejs.org)");
+      const onPath = spawnSync(process.platform === "win32" ? "where" : "which", ["chamber"], { encoding: "utf8" }).status === 0;
+      lines.push(`${onPath ? "✔" : "·"} chamber command ${onPath ? "on PATH" : `not on this shell's PATH yet (new terminals have it; meanwhile run ${join(process.env.CHAMBER_BIN || join(process.env.HOME || "~", ".local", "bin"), "chamber")})`}`);
+      const config = loadConfig();
+      check(Boolean(config), config ? `in ${config.name} as @${config.owner} (${config.invite.relay})` : "not in a chamber", "join with the invite link your admin sent, or create one: chamber start");
+      if (config) {
+        await config.invite.ready();
+        const headers = { ...config.invite.auth, ...(config.invite.pass ? { "x-chamber-pass": config.invite.pass } : {}) };
+        const info = await fetch(`${config.invite.relay}/v1/relay`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json()).catch(() => null);
+        check(Boolean(info), info ? `relay reachable (v${info.relay ?? "?"})` : "relay not reachable", "check the network; the relay may be down");
+        if (info) {
+          const member = await fetch(`${config.invite.relay}/v1/lines/${config.invite.lineId}/memory`, { headers, signal: AbortSignal.timeout(8000) }).catch(() => null);
+          const why = member && !member.ok ? (await member.json().catch(() => ({}))).error : "";
+          // A verified chamber, joined with an invite pass that the admin's app hasn't certified yet.
+          const { parseCert } = await import("../lib/identity.mjs");
+          const asked = !member?.ok && !parseCert(config.invite.pass) && config.invite.pass
+            ? await fetch(`${config.invite.relay}/v1/lines/${config.invite.lineId}/enroll`, { headers, signal: AbortSignal.timeout(8000) }).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+            : null;
+          if (asked?.version >= 3 && asked.status !== "rejected") {
+            check(false, asked.status === "none" ? "not asked to join yet" : "asked to join: waiting for the admin to let you in", asked.status === "none" ? "open the Chamber app, or restart Claude Code in a connected project: either asks to join" : "ask your admin to open their Chamber app (it lets you in on its own), or to run chamber approve");
+          } else {
+            check(Boolean(member?.ok), member?.ok ? "membership accepted" : `membership refused${why ? `: ${why}` : ""}${asked?.status === "rejected" ? " (the admin declined)" : ""}`, "ask your admin for a new invite");
+          }
+        }
+        // Each project this machine connected, and whether its Claude Code is still wired to the chamber.
+        const agents = join(HOME, "agents");
+        const projects = new Map();
+        for (const dir of existsSync(agents) ? readdirSync(agents) : []) {
+          if (!dir.startsWith(`${config.owner}__`)) continue;
+          try {
+            const { path } = JSON.parse(readFileSync(join(agents, dir, "project.json"), "utf8"));
+            if (!projects.has(path)) projects.set(path, []);
+            projects.get(path).push(dir.slice(config.owner.length + 2));
+          } catch {}
+        }
+        if (!projects.size) check(false, "no project connected yet", "run chamber setup <project folder> for each project your agents work in");
+        for (const [path, names] of projects) {
+          if (!existsSync(path)) {
+            lines.push(`· ${path}: folder is gone (chamber remove there, or ignore)`);
+            continue;
+          }
+          let hooked = false;
+          try {
+            const text = readFileSync(join(path, ".claude", "settings.local.json"), "utf8");
+            hooked = text.includes("--chamber-hook") || text.includes("CHAMBER=1");
+          } catch {}
+          const wantsClaude = names.some((n) => n.startsWith("claude-code."));
+          check(!wantsClaude || hooked, `${path}: ${names.join(", ")}${wantsClaude && !hooked ? " (Claude Code hooks missing)" : ""}`, `chamber setup ${JSON.stringify(path)}`);
+        }
+      }
+      // The skill: how this machine's coding agents run Chamber for you (invite, join, the app).
+      const skills = [".claude", ".codex"].filter((a) => existsSync(join(homedir(), a))).map((a) => join(homedir(), a, "skills", "chamber", "SKILL.md"));
+      const missing = skills.filter((f) => !existsSync(f));
+      if (skills.length) lines.push(`${missing.length ? "·" : "✔"} Chamber skill ${missing.length ? `missing in ${missing.map((f) => f.split("/skills/")[0]).join(", ")} (chamber setup . adds it)` : "for your coding agents"}`);
+      console.log(lines.join("\n"));
+      console.log(ready ? "\nready: restart Claude Code or Codex in those projects and they join the chamber." : "\nnot ready yet: see the fixes above.");
+      return ready ? 0 : 1;
     }
     case "remove": {
       const { teardown } = await import("../lib/setup.mjs");
@@ -482,6 +624,19 @@ async function main() {
     }
     case "app":
     case "desktop": {
+      // The installed Mac app runs its own board: install it if it's missing (checked first), open it.
+      if (process.platform === "darwin" && process.arch === "arm64" && !opts.port) {
+        const { installApp } = await import("../lib/app.mjs");
+        const app = await installApp({ onProgress: (line) => console.log(line) });
+        const project = positionals[0] ? resolve(positionals[0]) : gitTop();
+        if (project && loadConfig()) {
+          const { setup } = await import("../lib/setup.mjs");
+          setup(project, { register: !opts["no-register"] && !process.env.CHAMBER_NO_REGISTER });
+        }
+        if (!opts["no-open"]) spawnSync("open", ["-a", app]);
+        console.log(opts["no-open"] ? `The app is at ${app}.` : `Opened ${app}.`);
+        return 0;
+      }
       const config = loadConfig();
       const project = positionals[0] ? resolve(positionals[0]) : gitTop();
       if (project && config) {

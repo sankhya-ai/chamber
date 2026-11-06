@@ -2,7 +2,7 @@
 // MCP server, the hooks, setup. Run: npm test (after `npm install` in relay/).
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -63,6 +63,10 @@ after(() => {
   try { process.kill(-relayProcess.pid, "SIGKILL"); } catch {}
   setTimeout(() => process.exit(0), 100).unref();
 });
+
+function spawnSyncGit(dir) {
+  spawnSync("git", ["init", "-q"], { cwd: dir });
+}
 
 function run(args, { home, input = "", cwd = ROOT, env = {} } = {}) {
   return new Promise((done) => {
@@ -133,30 +137,8 @@ test("a project's Claude Code: asked, shown mid-task by the hook, woken when idl
 
   const server = mcp(home, "claude-code.api", project);
   const init = await server.call("initialize", { protocolVersion: "2025-06-18" });
-  assert.deepEqual((await server.call("tools/list")).tools.map((t) => t.name), [
-    "agents",
-    "ask",
-    "inbox",
-    "reply",
-    "search",
-    "incident_memory",
-    "send_patch",
-    "review_patch",
-    "memory",
-    "memory_search",
-    "memory_write",
-    "memory_edit",
-    "decision",
-    "contract",
-    "coordinate_ask",
-    "coordinate_delegate",
-    "coordinate_review",
-    "coordinate_propose",
-    "coordinate_resolve",
-    "coordinate_handoff",
-    "coordinate_status",
-    "context_package",
-  ]);
+  // Five verbs; decision and contract appear once the chamber has some on record.
+  assert.deepEqual((await server.call("tools/list")).tools.map((t) => t.name), ["look", "ask", "reply", "note", "search"]);
 
   await invite.ready();
   const nitin = await join_(invite, "nitin/root", { kind: "root", answers: true, priority: 10 });
@@ -639,18 +621,19 @@ test("the Deploy-button path: a fresh relay is claimed by the first chamber; the
     const stranger = await Invite.create(fresh.url).ready();
     assert.equal((await fetch(`${fresh.url}/v1/lines/${stranger.lineId}/roster`, { headers: stranger.auth })).status, 403, "and serves only its chamber");
 
-    // Personal invites are on: the admin's invite brings a teammate in; the teammate can't invite.
+    // Personal invites are on: the admin's invite code brings a teammate in; the teammate can't invite.
     const admin = { CHAMBER_HOME: lineHome };
-    const command = (await run(["invite"], { home: lineHome, env: admin })).stdout;
-    const key = /sh -s -- (\S+)/.exec(command)[1];
-    assert.match(key, /~/, "a personal pass in the command");
+    const key = (await run(["invite", "--format", "code"], { home: lineHome, env: admin })).stdout.trim();
+    assert.match(key, /#.+~/, "a personal pass in the code");
     const mate = tmp("mate");
-    await run(["join", `${fresh.url}/#${key}`, "--as", "nitin"], { home: mate });
+    // (Without its wait: this test plays her app, which asks to join below.)
+    await run(["join", key, "--as", "nitin"], { home: mate, env: { CHAMBER_JOIN_NO_WAIT: "1" } });
     assert.match((await run(["invite"], { home: mate })).stderr, /only your chamber's admin/);
     const config = JSON.parse(readFileSync(join(mate, "config.json"), "utf8"));
     // A verified chamber: the teammate's app asks to join, and waits for the admin's app (or
     // `chamber approve`) to certify it and hand over the keys.
-    const nitin = new LineClient(await Invite.parse(config.invite).ready(), "nitin/board", { kind: "human", listens: true });
+    const nitinInvite = await Invite.parse(config.invite).ready();
+    const nitin = new LineClient(nitinInvite, "nitin/board", { kind: "human", listens: true });
     clients.add(nitin);
     nitin.run();
     for (let i = 0; i < 100 && !/waiting for the chamber's admin/.test(nitin.problem || ""); i++) await sleep(100);
@@ -667,6 +650,76 @@ test("the Deploy-button path: a fresh relay is claimed by the first chamber; the
     const removed = await run(["revoke", "nitin"], { home: lineHome, env: admin });
     assert.match(removed.stdout, /Everyone else has a new key \(epoch 2\)/, removed.stderr);
     nitin.close();
+
+    // The agent-driven way: the admin's message, pasted into a teammate's coding agent, which runs
+    // the installer from the relay's /setup.md with the one-time link.
+    const message = (await run(["invite", "maya"], { home: lineHome, env: admin })).stdout;
+    assert.match(message, new RegExp(`read ${fresh.url}/setup\\.md and follow it`));
+    const link = /(http\S+\/join\/\S+)/.exec(message)[1];
+    const guide = await (await fetch(`${fresh.url}/setup.md`)).text();
+    assert.match(guide, new RegExp(`curl -fsSL ${fresh.url}/install \\| sh -s -- '<their join link>'`), "the guide carries this relay's own address");
+    assert.match(guide, /DONE WHEN/);
+    const opened = await fetch(link.split("#")[0]);
+    assert.equal(opened.status, 200, "a person (or a link preview) opening the link sees a page");
+    assert.match(await opened.text(), /doesn.t use it/);
+    const mayaHome = tmp("maya-home");
+    const mayaProject = tmp("maya-proj");
+    spawnSyncGit(mayaProject);
+    const installed = await new Promise((done) => {
+      const child = spawn("sh", ["-c", `curl -fsSL ${fresh.url}/install | sh -s -- '${link}'`], { cwd: mayaProject, env: { ...process.env, HOME: mayaHome, CHAMBER_HOME: join(mayaHome, ".chamber"), CHAMBER_BIN: join(mayaHome, "bin"), CHAMBER_NO_REGISTER: "1", CHAMBER_HARNESSES: "claude" } });
+      children.add(child);
+      let out = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (out += d));
+      child.on("close", (code) => done({ code, out }));
+      // The admin's app lets her in on its own; here the admin's terminal does it while she waits.
+      void (async () => {
+        for (let i = 0; i < 60 && child.exitCode === null; i++) {
+          await run(["approve"], { home: lineHome, env: admin });
+          await sleep(1000);
+        }
+      })();
+    });
+    assert.equal(installed.code, 0, installed.out);
+    assert.match(installed.out, /You are in ashish's chamber as maya\./, "the name the admin chose");
+    assert.doesNotMatch(installed.out, /Asked to join/, "let in while the installer waited");
+    assert.ok(!installed.out.includes(link.split("#")[1]), "the installer never prints the key");
+    assert.ok(existsSync(join(mayaProject, ".claude", "settings.local.json")), "and the project it ran in is connected");
+    const doctor = await run(["doctor"], { home: join(mayaHome, ".chamber"), env: { HOME: mayaHome } });
+    assert.match(doctor.stdout, /membership accepted/, doctor.stdout);
+    const again = await run(["join", link], { home: tmp("thief") });
+    assert.notEqual(again.code, 0);
+    assert.match(again.stderr, /used already/, "a link works once");
+    const tampered = link.replace(/#.+$/, `#${"A".repeat(43)}`);
+    assert.match((await run(["join", tampered], { home: tmp("thief2") })).stderr, /used already|doesn't open/);
+
+    // Maya is a member now (her certificate replaced the pass): what follows uses her keys.
+    const mayaInvite = await Invite.parse(JSON.parse(readFileSync(join(mayaHome, ".chamber", "config.json"), "utf8")).invite).ready();
+    // Only the admin makes join links, even with a member's pass.
+    const forged = await fetch(`${fresh.url}/v1/lines/${mayaInvite.lineId}/tickets`, {
+      method: "POST",
+      headers: { ...mayaInvite.auth, "x-chamber-pass": mayaInvite.pass, "content-type": "application/json" },
+      body: JSON.stringify({ id: "f".repeat(32), sealed: "x" }),
+    });
+    assert.equal(forged.status, 403);
+
+    // Coordination tasks reach the relay sealed: it routes them but can't read them.
+    const { CoordinationManager } = await import("../lib/coordination.mjs");
+    const mgr = new CoordinationManager(tmp("coord"));
+    const task = mgr.request({ op: "ask", from: "nitin/claude-code.api", to: "ashish/claude-code.web", title: "token expiry type?", description: "is exp int seconds?", files: ["api/auth.py"] });
+    assert.ok(await mgr.pushToRelay(mayaInvite, task, "request"), "pushed");
+    const raw = await (await fetch(`${fresh.url}/v1/lines/${mayaInvite.lineId}/coordination`, { headers: { ...mayaInvite.auth, "x-chamber-pass": mayaInvite.pass } })).json();
+    const stored = JSON.stringify(raw.tasks);
+    assert.ok(!/token expiry|exp int|api\/auth/.test(stored), `the relay holds no task text: ${stored}`);
+    await mgr.pushToRelay(mayaInvite, task, "resolve", { by: "ashish/claude-code.web", resolution: "int, epoch seconds", evidence: { commit: "abc1234" } });
+    const other = new CoordinationManager(tmp("coord2"));
+    await other.syncWithRelay(mayaInvite);
+    const seen = other.get(task.id);
+    assert.equal(seen.title, "token expiry type?");
+    assert.deepEqual(seen.files, ["api/auth.py"]);
+    assert.equal(seen.resolution, "int, epoch seconds");
+    assert.equal(seen.evidence.commit, "abc1234");
+    assert.equal((await fetch(`${fresh.url}/v1/lines/${mayaInvite.lineId}/coordination`, { headers: mayaInvite.auth })).status, 403, "members only");
   } finally {
     fresh.stop();
   }
@@ -975,4 +1028,98 @@ test("harnesses: Codex, Antigravity and DeepSeek Harness get the tools and hooks
   await run(["remove", project, "--no-register"], { home, env });
   assert.equal(readFileSync(join(project, ".codex", "config.toml"), "utf8"), 'model = "o4"\n');
   assert.equal(JSON.parse(readFileSync(join(project, ".agents", "mcp_config.json"), "utf8")).mcpServers.chamber, undefined);
+});
+
+test("desks: two agents in clones of one repo see each other's work, hear of an overlap, and ask with a fallback", async () => {
+  const before = process.env.CHAMBER_DESK_TICK_MS;
+  process.env.CHAMBER_DESK_TICK_MS = "400"; // the servers spawned below tick fast
+  const { execFileSync } = await import("node:child_process");
+  const invite = Invite.create(relay);
+  const homeA = tmp("desk-ashish");
+  const homeN = tmp("desk-nitin");
+  assert.equal((await run(["join", String(invite), "--as", "ashish"], { home: homeA })).code, 0);
+  assert.equal((await run(["join", String(invite), "--as", "nitin"], { home: homeN })).code, 0);
+  const clone = (who, remote) => {
+    const dir = tmp(`clone-${who}`);
+    const git = (...args) => execFileSync("git", args, { cwd: dir, stdio: "pipe" });
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", `${who}@example.com`);
+    git("config", "user.name", who);
+    git("remote", "add", "origin", remote);
+    mkdirSync(join(dir, "lib"));
+    writeFileSync(join(dir, "lib", "wake.mjs"), "export {}\n");
+    git("add", ".");
+    git("commit", "-q", "-m", "start");
+    return dir;
+  };
+  const projA = clone("ashish", "git@github.com:sankhya-ai/chamber.git");
+  const projN = clone("nitin", "https://github.com/sankhya-ai/chamber");
+  const hook = (home, input) => run(["hook", "--agent", "claude-code.chamber"], { home, input: JSON.stringify(input) });
+  const work = async (home, project, prompt) => {
+    await hook(home, { hook_event_name: "UserPromptSubmit", cwd: project, prompt });
+    writeFileSync(join(project, "lib", "wake.mjs"), `// ${prompt}\n`);
+    await hook(home, { hook_event_name: "PostToolUse", cwd: project, tool_name: "Edit", tool_input: { file_path: join(project, "lib", "wake.mjs") } });
+  };
+  await work(homeN, projN, "windows port of the wake rules");
+  await work(homeA, projA, "desks for agents");
+
+  const nitin = mcp(homeN, "claude-code.chamber", projN);
+  const ashish = mcp(homeA, "claude-code.chamber", projA);
+  await nitin.call("initialize", {});
+  await ashish.call("initialize", {});
+  const until = async (fn, pattern, tries = 80) => {
+    let out = "";
+    for (let i = 0; i < tries; i++) {
+      out = await fn();
+      if (pattern.test(out)) return out;
+      await sleep(250);
+    }
+    return out;
+  };
+
+  // Each sees the other's desk: task, repo, branch, the file.
+  const looked = await until(async () => (await ashish.tool("look")).text, /nitin\/claude-code\.chamber — working/);
+  assert.match(looked, /nitin\/claude-code\.chamber — working, just now · github\.com\/sankhya-ai\/chamber@main · "windows port of the wake rules" · 1 uncommitted: lib\/wake\.mjs/);
+  assert.match(looked, /Overlaps with your work:\n- nitin\/claude-code\.chamber is also changing lib\/wake\.mjs/);
+  assert.match((await ashish.tool("look", { file: "lib/wake.mjs" })).text, /nitin\/claude-code\.chamber \(working, just now\) has it uncommitted in github\.com\/sankhya-ai\/chamber@main/);
+  assert.match((await ashish.tool("look", { who: "@nitin" })).text, /^# nitin\/claude-code\.chamber[\s\S]*## Now\n- task: "windows port of the wake rules"/);
+
+  // The overlap reaches Ashish's agent mid-task, through its hook, as a notice.
+  const noticed = await until(async () => (await hook(homeA, { hook_event_name: "PostToolUse", cwd: projA })).stdout, /Chamber noticed/);
+  assert.match(JSON.parse(noticed).hookSpecificOutput.additionalContext, /Overlap with nitin\/claude-code\.chamber[\s\S]*also changing lib\/wake\.mjs[\s\S]*chamber ask to=nitin\/claude-code\.chamber/);
+
+  // A note on Nitin's desk reaches Ashish's agent; with team: true it is team memory too.
+  assert.match((await nitin.tool("note", { kind: "decided", text: "wake rules keep answer as the default", team: true })).text, /teammates' agents see it now[\s\S]*team memory/);
+  assert.match(await until(async () => (await ashish.tool("look", { who: "nitin/claude-code.chamber" })).text, /\[decided\]/), /\[decided\] .* wake rules keep answer as the default/);
+  assert.match((await ashish.tool("look", { memory: "MEMORY.md" })).text, /- wake rules keep answer as the default \[source: desks\/nitin\/claude-code\.chamber\.md; by: nitin/);
+  assert.match((await ashish.tool("search", { query: "answer default" })).text, /MEMORY\.md:\d+: - wake rules keep answer/);
+
+  // Nobody answers in time: the asker still leaves with what the other desk says.
+  const asked = await ashish.tool("ask", { to: "nitin/claude-code.chamber", message: "are you changing the wake default?", wait_seconds: 1 });
+  assert.match(asked.text, /No answer within 1s[\s\S]*Meanwhile, what their desk says[\s\S]*windows port of the wake rules/);
+  // The answer comes later, with what it is based on.
+  const shownN = await until(async () => (await hook(homeN, { hook_event_name: "PostToolUse", cwd: projN })).stdout, /are you changing/);
+  const id = JSON.parse(shownN).hookSpecificOutput.additionalContext.match(/\[([0-9a-f]{32})\] from ashish/)[1];
+  assert.equal((await nitin.tool("reply", { message_id: id, message: "no, it stays answer" })).isError, false);
+  const answered = await until(async () => (await hook(homeA, { hook_event_name: "PostToolUse", cwd: projA })).stdout, /stays answer/);
+  assert.match(answered, /no, it stays answer\\n\\n— answered from github\.com\/sankhya-ai\/chamber@main [0-9a-f]{7} \(\+1 uncommitted\)/);
+
+  // The relay keeps only a desk's latest version.
+  const { TeamMemory } = await import("../lib/memory.mjs");
+  const memory = new TeamMemory(await invite.ready(), "ashish/test");
+  const deskFile = (await memory.list()).find((f) => f.path === "desks/nitin/claude-code.chamber.md");
+  assert.ok(deskFile.version >= 2, "rewritten as nitin worked");
+  assert.equal(await memory.read(deskFile.path, deskFile.version - 1), null, "older versions are gone");
+
+  // A closed session says so.
+  nitin.close();
+  assert.match(await until(async () => (await ashish.tool("look", { who: "@nitin" })).text, /\*\*offline\*\*/), /\*\*offline\*\*/);
+
+  // A new session starts from its own desk and the team's.
+  const started = JSON.parse((await hook(homeA, { hook_event_name: "SessionStart", cwd: projA, source: "startup" })).stdout).hookSpecificOutput.additionalContext;
+  assert.match(started, /Where you left off[\s\S]*desks for agents/);
+  assert.match(started, /Your team right now[\s\S]*- nitin\/claude-code\.chamber — offline, just now · github\.com\/sankhya-ai\/chamber@main/);
+  ashish.close();
+  if (before === undefined) delete process.env.CHAMBER_DESK_TICK_MS;
+  else process.env.CHAMBER_DESK_TICK_MS = before;
 });

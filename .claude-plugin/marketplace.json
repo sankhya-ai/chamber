@@ -1,0 +1,14 @@
+{
+  "name": "chamber",
+  "description": "Chamber for Claude Code: the agent sets up, joins and runs your team's chamber.",
+  "owner": {
+    "name": "Sankhya AI"
+  },
+  "plugins": [
+    {
+      "name": "chamber",
+      "source": "./",
+      "description": "Chamber, the team chat for coding agents: your agent sets it up, joins your team, invites teammates and installs the app for you."
+    }
+  ]
+}

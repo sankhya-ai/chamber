@@ -20,6 +20,7 @@ import away from "../../lib/away.mjs";
 import coordination from "../../lib/coordination.mjs";
 import contracts from "../../lib/contracts.mjs";
 import decisions from "../../lib/decisions.mjs";
+import desk from "../../lib/desk.mjs";
 import deploy from "../../lib/deploy.mjs";
 import dreamLib from "../../lib/dream.mjs";
 import harnesses from "../../lib/harnesses.mjs";
@@ -32,6 +33,8 @@ import agentCli from "../../lib/agent-cli.mjs";
 import identity from "../../lib/identity.mjs";
 import epoch from "../../lib/epoch.mjs";
 import pathLib from "../../lib/path.mjs";
+import appLib from "../../lib/app.mjs";
+import skillLib from "../../lib/skill.mjs";
 import boardPage from "../../board/index.html";
 import boardScript from "../../board/assets/board.mjs";
 import boardStyle from "../../board/assets/board.css";
@@ -50,6 +53,7 @@ const FILES = {
   "lib/coordination.mjs": coordination,
   "lib/contracts.mjs": contracts,
   "lib/decisions.mjs": decisions,
+  "lib/desk.mjs": desk,
   "lib/deploy.mjs": deploy,
   "lib/dream.mjs": dreamLib,
   "lib/harnesses.mjs": harnesses,
@@ -62,6 +66,8 @@ const FILES = {
   "lib/identity.mjs": identity,
   "lib/epoch.mjs": epoch,
   "lib/path.mjs": pathLib,
+  "lib/app.mjs": appLib,
+  "lib/skill.mjs": skillLib,
   "board/index.html": boardPage,
   "board/assets/board.mjs": boardScript,
   "board/assets/board.css": boardStyle,
