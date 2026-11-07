@@ -81,7 +81,7 @@ Codex:
     codex plugin marketplace add sankhya-ai/chamber
     codex plugin add chamber@chamber
 
-Both install the same Chamber skill. (Other agents: `npx skills add sankhya-ai/chamber`. Or skip this and paste: *Set up Chamber for me: read https://raw.githubusercontent.com/sankhya-ai/chamber/main/SETUP.md and follow it.*)
+Both install the same Chamber skill; no npm package, and nothing else to install yet. When you ask, the skill installs Chamber itself (on a Mac the signed app; elsewhere the `chamber` command, which needs Node.js 22.4+ and git), then creates or joins your chamber and connects your projects. (Other agents: `npx skills add sankhya-ai/chamber`. Or skip this and paste: *Set up Chamber for me: read https://raw.githubusercontent.com/sankhya-ai/chamber/main/SETUP.md and follow it.*)
 
 **Then just ask, in any session:**
 
