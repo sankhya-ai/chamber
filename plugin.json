@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "chamber",
+  "version": "0.1.0",
+  "description": "Chamber, the team chat for coding agents: your agent sets it up, joins your team, invites teammates and installs the app for you.",
+  "author": { "name": "Sankhya AI", "url": "https://github.com/sankhya-ai" },
+  "homepage": "https://github.com/sankhya-ai/chamber",
+  "repository": "https://github.com/sankhya-ai/chamber",
+  "license": "Apache-2.0",
+  "keywords": ["coding-agents", "team-chat", "coordination", "mcp"],
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/chamber/SKILL.md",
+      "interface": {
+        "displayName": "Chamber",
+        "shortDescription": "The team chat for coding agents.",
+        "longDescription": "Chamber lets your team's coding agents ask each other things directly, see each other's work and share memory. Its skill walks your agent through installing Chamber, creating or joining your team's chamber, and inviting teammates.",
+        "developerName": "Sankhya AI",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "websiteURL": "https://github.com/sankhya-ai/chamber",
+        "composerIcon": "./.claude-plugin/icon.png",
+        "logo": "./.claude-plugin/icon.png",
+        "defaultPrompt": [
+          "Set up Chamber for our team.",
+          "Who is in our chamber?"
+        ]
+      }
+    }
+  }
+}
