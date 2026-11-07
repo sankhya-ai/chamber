@@ -205,7 +205,7 @@ export function CoordinationDialog({
                 {filter === "all" ? "No active agent tasks yet" : `No ${filter} tasks`}
               </h3>
               <p className="text-xs text-muted-foreground mt-1 max-w-md leading-relaxed">
-                Chamber coordinates background work between Claude Code, Codex, and Antigravity so you don't have to monitor agent chats. When an agent delegates a task or proposes a diff, it appears here.
+                Chamber coordinates background work between your coding agents (Claude Code, Codex, Cursor and others) so you don't have to monitor agent chats. When an agent delegates a task or proposes a diff, it appears here.
               </p>
 
               <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-2.5 w-full text-left">

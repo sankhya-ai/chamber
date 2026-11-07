@@ -25,7 +25,9 @@
 //   chamber doctor                  is this machine ready: Node, PATH, the chamber, membership, each
 //                                   connected project (what an agent setting chamber up checks last)
 //   chamber setup                   put the project you are in in the chamber: its Claude Code, Codex,
-//                                   Antigravity, and your DeepSeek Harness (--harness codex,… to choose)
+//                                   Antigravity, Cursor, Gemini CLI, VS Code, and your DeepSeek Harness
+//                                   and Windsurf (--harness cursor,… to choose)
+//   chamber connect                 any other MCP agent: print the settings to paste into it (--name, --print)
 //   chamber status                  who is in the chamber
 //   chamber send <to> <text>        send from the terminal (--file path, --reply-to <id> to answer)
 //   chamber search <query>          search talks, memory, contracts, incidents (--channel, --type)
@@ -86,6 +88,7 @@ const { values: opts, positionals } = parseArgs({
     home: { type: "string" },
     chamber: { type: "string" },
     "no-files": { type: "boolean" },
+    print: { type: "boolean" },
     post: { type: "boolean" },
     daily: { type: "string" },
     days: { type: "string" },
@@ -505,7 +508,8 @@ async function main() {
       const { setup } = await import("../lib/setup.mjs");
       const register = !opts["no-register"] && !process.env.CHAMBER_NO_REGISTER;
       const harnesses = opts.harness ? opts.harness.split(",").map((h) => h.trim()).filter(Boolean) : null;
-      const LABEL = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity", dsh: "DeepSeek Harness (for you, in every project)" };
+      const { MCP_CLIENTS } = await import("../lib/harnesses.mjs");
+      const LABEL = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity", dsh: "DeepSeek Harness (for you, in every project)", ...Object.fromEntries(Object.entries(MCP_CLIENTS).map(([id, c]) => [id, c.scope === "home" ? `${c.label} (for you, in every project)` : c.label])) };
       // Several projects at once: chamber setup ~/code/api ~/code/web
       for (const folder of positionals.length ? positionals : ["."]) {
         if (!existsSync(resolve(folder))) {
@@ -517,7 +521,29 @@ async function main() {
         for (const h of result.harnesses) console.log(`  ${LABEL[h.harness]}  as ${config.owner}/${h.agent}`);
         if (!result.registered && register) console.log(`  Could not run the claude command; register the MCP server yourself:\n    ${result.manual}`);
       }
-      console.log("Restart Claude Code or Codex in these projects to connect (a running session doesn't pick it up).");
+      console.log("Restart your agents in these projects to connect (a running session doesn't pick it up).");
+      return 0;
+    }
+    case "connect": {
+      // Any other MCP agent: the snippet to paste into its MCP settings. Nothing is written but a note
+      // of which folder the agent works in, so the board can list it.
+      const config = needConfig();
+      const { serverEntry } = await import("../lib/harnesses.mjs");
+      const { defaultName } = await import("../lib/setup.mjs");
+      const name = opts.name || defaultName(resolve("."), "agent");
+      if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(name)) {
+        console.error("--name: lowercase letters, digits, dot, dash or underscore, up to 32");
+        return 2;
+      }
+      const marker = join(HOME, "agents", `${config.owner}__${name}`, "project.json");
+      mkdirSync(dirname(marker), { recursive: true });
+      writeFileSync(marker, JSON.stringify({ path: resolve(".") }));
+      const snippet = JSON.stringify({ mcpServers: { chamber: serverEntry(name) } }, null, 2);
+      if (opts.print || !process.stdout.isTTY) {
+        console.log(snippet);
+        return 0;
+      }
+      console.log(`Add this to your agent's MCP settings (most take this shape; VS Code calls the key "servers"):\n\n${snippet}\n\nIt joins the chamber as ${config.owner}/${name}. Restart the agent to connect.`);
       return 0;
     }
     case "doctor": {

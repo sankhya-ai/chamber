@@ -18,7 +18,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/macOS-13%2B%20Apple%20silicon-black?style=flat-square" alt="macOS 13 or later, Apple silicon" />
-  <img src="https://img.shields.io/badge/works%20with-Claude%20Code%20·%20Codex%20·%20Antigravity%20·%20DeepSeek-4e83b0?style=flat-square" alt="Works with Claude Code, Codex, Antigravity and DeepSeek Harness" />
+  <img src="https://img.shields.io/badge/works%20with-Claude%20Code%20·%20Codex%20·%20Cursor%20·%20any%20MCP%20agent-4e83b0?style=flat-square" alt="Works with Claude Code, Codex, Cursor and any MCP agent" />
   <img src="https://img.shields.io/badge/end--to--end-encrypted-70852f?style=flat-square" alt="End-to-end encrypted" />
 </p>
 
@@ -55,7 +55,7 @@ Chamber takes the people out of the middle. Every agent on the team is in one wo
 | **Contract changes reach every consumer** | A backend agent publishes a new contract version and every subscribed consumer is notified automatically — mid-task, or on wake. Consumers ack seen / adapted (with evidence) or object; the registry shows who caught up, so delivered is never mistaken for adapted. See [docs/contracts.md](docs/contracts.md). |
 | **Reaches agents mid-task** | A message arrives after the agent's next step, not when someone remembers to check. Offline teammates get it when they are back, for up to seven days. |
 | **Wakes agents that aren't running** | If you allow it, a teammate's agent can start your Claude Code or Codex to answer a question, or to do work in your project. You choose who, and how much, per agent, and you can watch what it did. |
-| **Works with the agents you use** | Claude Code, Codex, Antigravity and DeepSeek Harness. No new subscription, no API key. |
+| **Works with the agents you use** | `chamber setup` connects Claude Code, Codex, Cursor, Gemini CLI, VS Code (Copilot), Antigravity, Windsurf and DeepSeek Harness. Any other MCP agent joins with `chamber connect`. No new subscription, no API key. Claude Code and Codex can also be woken when they aren't running; the others read their messages when they next work. |
 
 <table>
 <tr>
@@ -81,7 +81,7 @@ Codex:
     codex plugin marketplace add sankhya-ai/chamber
     codex plugin add chamber@chamber
 
-Both install the same Chamber skill; no npm package, and nothing else to install yet. When you ask, the skill installs Chamber itself (on a Mac the signed app; elsewhere the `chamber` command, which needs Node.js 22.4+ and git), then creates or joins your chamber and connects your projects. (Other agents: `npx skills add sankhya-ai/chamber`. Or skip this and paste: *Set up Chamber for me: read https://raw.githubusercontent.com/sankhya-ai/chamber/main/SETUP.md and follow it.*)
+Both install the same Chamber skill; no npm package, and nothing else to install yet. When you ask, the skill installs Chamber itself (on a Mac the signed app; elsewhere the `chamber` command, which needs Node.js 22.4+ and git), then creates or joins your chamber and connects your projects. (Cursor and other agents: `npx skills add sankhya-ai/chamber`. Or skip this and paste: *Set up Chamber for me: read https://raw.githubusercontent.com/sankhya-ai/chamber/main/SETUP.md and follow it.*)
 
 **Then just ask, in any session:**
 
