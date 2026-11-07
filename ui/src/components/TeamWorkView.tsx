@@ -502,7 +502,7 @@ export function TeamWorkView({
           <div className="flex flex-col gap-3 rounded-xl border border-primary/30 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h4 className="text-sm font-semibold text-foreground">Connect your first project</h4>
-              <p className="mt-0.5 text-xs text-muted-foreground">Pick a project folder and the coding agents in it (Claude Code, Codex, Antigravity) join the chamber. You can add more any time.</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">Pick a project folder and the coding agents in it (Claude Code, Codex, Cursor, Antigravity, Gemini CLI, VS Code) join the chamber. You can add more any time.</p>
             </div>
             <Button size="sm" onClick={onAddWorkspace} className="h-8 shrink-0 gap-1.5 text-xs font-medium">
               <FolderGit2 className="size-3.5" />
@@ -560,7 +560,7 @@ export function TeamWorkView({
           <div>
             {!(data?.projects ?? []).length ? (
               <div className="text-center py-4 text-xs text-muted-foreground">
-                No repositories connected. Click "Add Workspace" to connect Claude Code, Codex, or Antigravity.
+                No repositories connected. Click "Add Workspace" to connect Claude Code, Codex, Cursor or another coding agent.
               </div>
             ) : null}
           </div>

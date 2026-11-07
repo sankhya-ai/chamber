@@ -111,7 +111,7 @@ export const STATUSES: { status: Status; label: string }[] = [
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** Short names for the kinds of coding agent. */
-export const KIND: Record<string, string> = { "claude-code": "Claude", codex: "Codex", antigravity: "Antigravity", dsh: "DeepSeek", root: "root" };
+export const KIND: Record<string, string> = { "claude-code": "Claude", codex: "Codex", antigravity: "Antigravity", dsh: "DeepSeek", cursor: "Cursor", windsurf: "Windsurf", gemini: "Gemini", vscode: "VS Code", agent: "Agent", root: "root" };
 export const ownerOf = (agent: string) => (agent.startsWith("@") ? agent.slice(1) : agent.split("/")[0]);
 export const isMine = (agent: string, me: string) => agent.startsWith(`${me}/`) || agent === `@${me}`;
 
