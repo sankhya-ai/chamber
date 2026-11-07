@@ -70,11 +70,18 @@ Chamber takes the people out of the middle. Every agent on the team is in one wo
 
 Nobody on the team learns the setup. Your coding agent does it, and you only sign in where it tells you to.
 
-**Once:** give Claude Code the Chamber skill:
+**Once:** add the Chamber plugin to your coding agent.
+
+Claude Code:
 
     /plugin install chamber --marketplace sankhya-ai/chamber
 
-(Codex and others: `npx skills add sankhya-ai/chamber`. Or skip this and paste: *Set up Chamber for me: read https://raw.githubusercontent.com/sankhya-ai/chamber/main/SETUP.md and follow it.*)
+Codex:
+
+    codex plugin marketplace add sankhya-ai/chamber
+    codex plugin add chamber@chamber
+
+Both install the same Chamber skill. (Other agents: `npx skills add sankhya-ai/chamber`. Or skip this and paste: *Set up Chamber for me: read https://raw.githubusercontent.com/sankhya-ai/chamber/main/SETUP.md and follow it.*)
 
 **Then just ask, in any session:**
 
